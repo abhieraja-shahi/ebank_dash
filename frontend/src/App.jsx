@@ -3,10 +3,9 @@ import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
+import Login from './Login'
 import './App.css'
 
-// In Docker, VITE_API_URL is unset → '' (relative) and nginx proxies /api/*.
-// In local dev, VITE_API_URL is also unset → '' and Vite proxies /api/* to :8000.
 const API = import.meta.env.VITE_API_URL ?? ''
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -42,12 +41,12 @@ const ICONS = {
   accounts: <Icon d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" d2="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" circle={[9, 7, 4]} />,
   deposits: <Icon rect={[1, 4, 22, 16, 2]} line={[[1, 10, 23, 10]]} />,
   advances: <Icon d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />,
+  alerts:   <Icon d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />,
   investments: <Icon line={[[18,20,18,10],[12,20,12,4],[6,20,6,14]]} />,
   borrowings: <Icon d="M23 6l-9.5 9.5-5-5L1 18" d2="M17 6h6v6" />,
   lc: <Icon d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />,
   gl: <Icon d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" d2="M14 2v6h6M16 13H8M16 17H8M10 9H8" />,
   reports: <Icon d="M9 11l3 3L22 4" d2="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />,
-  alerts: <Icon d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />,
   settings: <Icon d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />,
   branch: <Icon d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
   calendar: <Icon rect={[3, 4, 18, 18, 2]} d="M16 2v4M8 2v4M3 10h18" />,
@@ -62,6 +61,7 @@ const NAV_MAIN = [
   { id: 'accounts', label: 'Accounts',            icon: ICONS.accounts,     active: true  },
   { id: 'advances', label: 'Loans & Advances',    icon: ICONS.advances,     active: true  },
   { id: 'deposits', label: 'Deposits',            icon: ICONS.deposits,     active: true  },
+  { id: 'alerts',   label: 'Alerts',              icon: ICONS.alerts,       active: true  },
   { id: null,       label: 'Investments',         icon: ICONS.investments,  active: false },
   { id: null,       label: 'Borrowings',          icon: ICONS.borrowings,   active: false },
   { id: null,       label: 'Letter of Credit',    icon: ICONS.lc,           active: false },
@@ -70,16 +70,14 @@ const NAV_MAIN = [
 ]
 
 const NAV_BOTTOM = [
-  { id: null, label: 'Alerts & Notifications', icon: ICONS.alerts,   active: false },
-  { id: null, label: 'Settings',               icon: ICONS.settings, active: false },
+  { id: null, label: 'Settings', icon: ICONS.settings, active: false },
 ]
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ section, setSection, branches, filters, setFilters, onApply }) {
+function Sidebar({ section, setSection, branches, filters, setFilters, onApply, bankInfo, alertCount }) {
   const [draft, setDraft] = useState(filters)
 
-  // Sync when external filters change
   useEffect(() => { setDraft(filters) }, [filters])
 
   function apply() {
@@ -89,16 +87,14 @@ function Sidebar({ section, setSection, branches, filters, setFilters, onApply }
 
   return (
     <aside className="sidebar">
-      {/* Logo */}
       <div className="sidebar-logo">
-        <div className="logo-mark">B</div>
+        <div className="logo-mark">{bankInfo?.initial || '…'}</div>
         <div>
-          <div className="logo-name">BUCB</div>
+          <div className="logo-name">{bankInfo?.bankName || '…'}</div>
           <div className="logo-sub">Core Banking</div>
         </div>
       </div>
 
-      {/* Main nav */}
       <nav className="sidebar-nav">
         {NAV_MAIN.map((item, i) => (
           <button
@@ -109,11 +105,13 @@ function Sidebar({ section, setSection, branches, filters, setFilters, onApply }
           >
             <span className="nav-icon">{item.icon}</span>
             <span className="nav-label">{item.label}</span>
+            {item.id === 'alerts' && alertCount > 0 && (
+              <span className="nav-badge">{alertCount}</span>
+            )}
           </button>
         ))}
       </nav>
 
-      {/* Bottom nav */}
       <nav className="sidebar-nav-bottom">
         {NAV_BOTTOM.map((item, i) => (
           <button key={i} className="nav-item nav-dim" title="Coming soon">
@@ -123,13 +121,16 @@ function Sidebar({ section, setSection, branches, filters, setFilters, onApply }
         ))}
       </nav>
 
-      {/* Filters */}
       <div className="sidebar-filters">
         <div className="sf-heading">Filters</div>
 
         <div className="sf-field">
           <label>Branch</label>
-          <select value={draft.branch} onChange={e => setDraft(d => ({ ...d, branch: e.target.value }))}>
+          <select value={draft.branch} onChange={e => {
+            const newBranch = e.target.value
+            setDraft(d => ({ ...d, branch: newBranch }))
+            onApply({ ...filters, branch: newBranch })
+          }}>
             <option value="">All Branches</option>
             {branches.filter(b => b.code !== '90').map(b => (
               <option key={b.code} value={b.code}>{b.name}</option>
@@ -163,12 +164,17 @@ const SECTION_TITLES = {
   accounts: 'Accounts',
   deposits: 'Deposits',
   advances: 'Loans & Advances',
+  alerts:   'Alerts & Exceptions',
 }
 
-function TopHeader({ section, filters, branches, fetching, onRefresh, updatedAt }) {
+function TopHeader({ section, filters, branches, fetching, onRefresh, updatedAt, user, onLogout }) {
   const branchLabel = filters.branch
     ? (branches.find(b => b.code === filters.branch)?.name || filters.branch)
     : 'All Branches'
+
+  const initials = user?.userName
+    ? user.userName.split(' ').slice(0, 2).map(w => w[0]).join('')
+    : 'U'
 
   return (
     <header className="top-bar">
@@ -179,7 +185,7 @@ function TopHeader({ section, filters, branches, fetching, onRefresh, updatedAt 
         {filters.toDate && (
           <div className="top-meta">
             <span className="top-meta-icon">{ICONS.calendar}</span>
-            <span>As on Date: <strong>{fmtDate(filters.toDate)}</strong></span>
+            <span>As on: <strong>{fmtDate(filters.toDate)}</strong></span>
           </div>
         )}
         <div className="top-meta">
@@ -193,8 +199,11 @@ function TopHeader({ section, filters, branches, fetching, onRefresh, updatedAt 
           )}
         </button>
         <div className="top-user">
-          <div className="user-avatar">A</div>
-          <span className="user-name">Admin User</span>
+          <div className="user-avatar">{initials}</div>
+          <span className="user-name">{user?.userName || 'User'}</span>
+          <button className="logout-btn" onClick={onLogout} title="Sign out">
+            <Icon d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" size={14} />
+          </button>
         </div>
       </div>
     </header>
@@ -222,6 +231,13 @@ const KPI_ACCENT = {
   amber:  { color: '#b45309', lt: '#fffbeb' },
   red:    { color: '#dc2626', lt: '#fef2f2' },
   purple: { color: '#7c3aed', lt: '#f5f3ff' },
+}
+
+const SEV_STYLE = {
+  critical: { bg: '#fef2f2', border: '#fca5a5', color: '#dc2626', dot: '#dc2626' },
+  warning:  { bg: '#fffbeb', border: '#fcd34d', color: '#b45309', dot: '#f59e0b' },
+  info:     { bg: '#eff6ff', border: '#93c5fd', color: '#1d4ed8', dot: '#3b82f6' },
+  ok:       { bg: '#f0fdf4', border: '#86efac', color: '#15803d', dot: '#22c55e' },
 }
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
@@ -298,9 +314,27 @@ function BranchTable({ rows, columns }) {
   )
 }
 
+// ─── Toggle ───────────────────────────────────────────────────────────────────
+
+function Toggle({ options, value, onChange }) {
+  return (
+    <div className="toggle-group">
+      {options.map(o => (
+        <button
+          key={o.value}
+          className={`toggle-btn ${value === o.value ? 'toggle-active' : ''}`}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ─── Section: Overview ────────────────────────────────────────────────────────
 
-function OverviewSection({ accounts, kyc, loans, loading }) {
+function OverviewSection({ accounts, kyc, loans, alertsSummary, loading }) {
   const kycColor  = kyc?.compliance_rate >= 95 ? 'green' : kyc?.compliance_rate >= 85 ? 'amber' : 'red'
   const npaAccent = loans?.npa_ratio <= 5 ? 'green' : loans?.npa_ratio <= 10 ? 'amber' : 'red'
   const kycPie = kyc
@@ -309,15 +343,26 @@ function OverviewSection({ accounts, kyc, loans, loading }) {
 
   return (
     <>
+      {/* Alert banner */}
+      {alertsSummary && alertsSummary.critical > 0 && (
+        <div className="alert-banner critical">
+          <span className="alert-banner-dot" />
+          <strong>{alertsSummary.critical} critical alert{alertsSummary.critical > 1 ? 's' : ''}</strong>
+          {alertsSummary.warning > 0 && <span> · {alertsSummary.warning} warning{alertsSummary.warning > 1 ? 's' : ''}</span>}
+          <span className="alert-banner-hint"> — check Alerts section for details</span>
+        </div>
+      )}
+
       <div className="kpi-bar">
-        <KpiCard icon="👥" label="Total Customers"    value={fmtNum(accounts?.total_customers)} sub="Registered profiles" accent="blue" />
-        <KpiCard icon="📋" label="Total Accounts"     value={fmtNum(accounts?.total)} sub={`${fmtNum(accounts?.sb_total)} SB · ${fmtNum(accounts?.ca_total)} CA`} accent="blue" />
-        <KpiCard icon="📈" label="New Accounts (2026)" value={fmtNum(accounts?.new_this_year)} sub="Year to date" accent="cyan" />
-        <KpiCard icon="✅" label="KYC Compliance"     value={kyc ? `${kyc.compliance_rate}%` : null} sub={`${fmtNum(kyc?.pending)} pending`} accent={kycColor} />
-        <KpiCard icon="⚠️" label="NPA Ratio"          value={loans ? `${loans.npa_ratio}%` : null} sub={`${fmtNum(loans?.npa_count)} stressed`} accent={npaAccent} />
+        <KpiCard icon="👥" label="Total Customers"     value={fmtNum(accounts?.total_customers)} sub="Registered profiles" accent="blue" />
+        <KpiCard icon="📋" label="Total Accounts"      value={fmtNum(accounts?.total)} sub={`${fmtNum(accounts?.sb_total)} SB · ${fmtNum(accounts?.ca_total)} CA`} accent="blue" />
+        <KpiCard icon="📈" label="New in Period"       value={fmtNum(accounts?.new_in_period)} sub={accounts?.period_label || 'All time'} accent="cyan" />
+        <KpiCard icon="✅" label="KYC Compliance"      value={kyc ? `${kyc.compliance_rate}%` : null} sub={`${fmtNum(kyc?.pending)} pending`} accent={kycColor} />
+        <KpiCard icon="⚠️" label="NPA Ratio"           value={loans ? `${loans.npa_ratio}%` : null} sub={`${fmtNum(loans?.npa_count)} stressed (by count)`} accent={npaAccent} />
       </div>
+
       <div className="main-grid">
-        <Panel title="Account Portfolio — New Accounts (2020–2026)"
+        <Panel title="Account Portfolio — New Accounts"
                badge={accounts ? `${fmtNum(accounts.total)} Total` : undefined}
                className="panel-accounts">
           {loading || !accounts ? <Spinner /> : (
@@ -332,7 +377,7 @@ function OverviewSection({ accounts, kyc, loans, loading }) {
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" vertical={false} />
-                    <XAxis dataKey="year" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <XAxis dataKey="period" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false}
                            tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v} />
                     <Tooltip content={<ChartTip />} cursor={{ stroke: '#dce3ed', strokeWidth: 1.5 }} />
@@ -442,17 +487,104 @@ function OverviewSection({ accounts, kyc, loans, loading }) {
 
 // ─── Section: Accounts ────────────────────────────────────────────────────────
 
-function AccountsSection({ data, loading }) {
+const STATUS_META = {
+  1:  { label: 'Active',             color: '#16a34a', bg: '#f0fdf4' },
+  2:  { label: 'Inoperative',        color: '#d97706', bg: '#fffbeb' },
+  4:  { label: 'Frozen',             color: '#2563eb', bg: '#eff6ff' },
+  10: { label: 'Lien',               color: '#7c3aed', bg: '#f5f3ff' },
+  15: { label: 'DEAF',               color: '#dc2626', bg: '#fef2f2' },
+}
+const KEY_STATUSES = [1, 2, 4, 10, 15]
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+function fmtTrendTick(val, freq) {
+  if (!val) return val
+  if (freq === 'month') return `${MONTHS[parseInt(val.slice(4,6))-1]} '${val.slice(2,4)}`
+  if (freq === 'day')   return `${val.slice(6,8)} ${MONTHS[parseInt(val.slice(4,6))-1]}`
+  return val
+}
+
+function AccountsSection({ data, loading, filters }) {
   if (loading || !data) return <Spinner />
+  const [showStatusPanel, setShowStatusPanel] = useState(false)
+  const [trendFreq, setTrendFreq]   = useState('year')
+  const [localTrend, setLocalTrend] = useState(null)
+  const [trendLoading, setTrendLoading] = useState(false)
+
+  useEffect(() => {
+    if (trendFreq !== 'year' && !filters?.fromDate && !filters?.toDate) {
+      setTrendFreq('year'); setLocalTrend(null); return
+    }
+    if (trendFreq === 'year') { setLocalTrend(null); return }
+    setTrendLoading(true)
+    const p = new URLSearchParams({ freq: trendFreq })
+    if (filters?.branch)   p.set('branch',    filters.branch)
+    if (filters?.fromDate) p.set('from_date', filters.fromDate)
+    if (filters?.toDate)   p.set('to_date',   filters.toDate)
+    fetch(`${API}/api/metrics/accounts?${p}`)
+      .then(r => r.json())
+      .then(d => setLocalTrend(d.trend))
+      .catch(() => {})
+      .finally(() => setTrendLoading(false))
+  }, [trendFreq, filters])
+
+  const trend = localTrend ?? data.trend ?? []
+  const trendTitle = trendFreq === 'year' ? 'New Accounts Trend (by Year)'
+                   : trendFreq === 'month' ? 'New Accounts by Month'
+                   : 'New Accounts by Day'
+  const statusMap = Object.fromEntries((data.status_breakdown || []).map(s => [s.status, s.count]))
+
   const branchChartData = data.branch_breakdown.map(b => ({ name: b.branch, sb: b.sb, ca: b.ca }))
   return (
     <>
       <div className="kpi-bar">
         <KpiCard icon="🏦" label="Saving Bank Accounts" value={fmtNum(data.sb_total)}        sub="All branches"    accent="blue"   />
         <KpiCard icon="💼" label="Current Accounts"     value={fmtNum(data.ca_total)}        sub="All branches"    accent="cyan"   />
-        <KpiCard icon="📈" label="New Accounts (2026)"  value={fmtNum(data.new_this_year)}   sub="Year to date"    accent="green"  />
+        <KpiCard icon="📈" label="New in Period"        value={fmtNum(data.new_in_period)}   sub={data.period_label || 'All time'} accent="green"  />
         <KpiCard icon="👥" label="Total Customers"      value={fmtNum(data.total_customers)} sub="Registered"      accent="purple" />
       </div>
+
+      {/* Total Accounts status breakdown */}
+      <div className="acct-status-bar">
+        <div className="acct-status-total">
+          <span className="acct-status-total-num">{fmtNum(data.total)}</span>
+          <span className="acct-status-total-lbl">Total Accounts</span>
+        </div>
+        <div className="acct-status-pills">
+          {KEY_STATUSES.map(s => {
+            const meta = STATUS_META[s]
+            return (
+              <div key={s} className="acct-status-pill" style={{ borderColor: meta.color + '40', background: meta.bg }}>
+                <span className="acct-status-pill-count" style={{ color: meta.color }}>{fmtNum(statusMap[s] ?? 0)}</span>
+                <span className="acct-status-pill-lbl">{meta.label}</span>
+              </div>
+            )
+          })}
+        </div>
+        <button className="acct-status-toggle" onClick={() => setShowStatusPanel(v => !v)}>
+          {showStatusPanel ? 'Hide breakdown' : 'View breakdown'}
+        </button>
+      </div>
+
+      {showStatusPanel && (
+        <div className="acct-status-breakdown">
+          {(data.status_breakdown || []).map(s => {
+            const meta = STATUS_META[s.status]
+            const pct  = data.total > 0 ? (s.count / data.total * 100).toFixed(1) : '0.0'
+            return (
+              <div key={s.status} className="acct-status-row">
+                <span className="acct-status-row-dot" style={{ background: meta ? meta.color : '#94a3b8' }} />
+                <span className="acct-status-row-lbl">{s.label}</span>
+                <div className="acct-status-row-bar-wrap">
+                  <div className="acct-status-row-bar" style={{ width: `${Math.max(pct, 0.5)}%`, background: meta ? meta.color + '99' : '#94a3b8' }} />
+                </div>
+                <span className="acct-status-row-pct">{pct}%</span>
+                <span className="acct-status-row-num">{fmtNum(s.count)}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
       <div className="two-col-grid">
         <Panel title="SB & CA by Branch" badge={`${fmtNum(data.sb_total + data.ca_total)} Total`}>
           <div style={{ height: 240 }}>
@@ -470,10 +602,33 @@ function AccountsSection({ data, loading }) {
             </ResponsiveContainer>
           </div>
         </Panel>
-        <Panel title="New Accounts Trend (2020–2026)">
-          <div style={{ height: 240 }}>
+        <Panel title={trendTitle}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4, marginBottom: 8 }}>
+            {['year','month','day'].map(f => {
+              const needsRange = f !== 'year'
+              const disabled   = needsRange && !filters?.fromDate && !filters?.toDate
+              return (
+                <button key={f}
+                  onClick={() => !disabled && setTrendFreq(f)}
+                  title={disabled ? 'Set a date range to use this view' : undefined}
+                  style={{
+                    padding: '2px 10px', fontSize: 11, fontWeight: 600, borderRadius: 6,
+                    cursor: disabled ? 'not-allowed' : 'pointer',
+                    border: '1px solid', transition: 'all .15s',
+                    opacity: disabled ? 0.4 : 1,
+                    background: trendFreq === f ? 'var(--blue)' : 'transparent',
+                    color:      trendFreq === f ? '#fff'        : 'var(--muted)',
+                    borderColor: trendFreq === f ? 'var(--blue)' : '#dce3ed',
+                  }}>
+                  {f === 'year' ? 'Y' : f === 'month' ? 'M' : 'D'}
+                </button>
+              )
+            })}
+          </div>
+          <div style={{ height: 220, position: 'relative' }}>
+            {trendLoading && <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', background:'rgba(255,255,255,.6)', zIndex:1 }}><Spinner /></div>}
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={data.trend} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
+              <AreaChart data={trend} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
                 <defs>
                   <linearGradient id="areaGrad2" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%"   stopColor="#1d4ed8" stopOpacity={0.12} />
@@ -481,12 +636,17 @@ function AccountsSection({ data, loading }) {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" vertical={false} />
-                <XAxis dataKey="year" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <XAxis dataKey="period" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false}
+                       tickFormatter={v => fmtTrendTick(v, trendFreq)}
+                       interval={trendFreq === 'year' ? 0
+                                : trendFreq === 'month' ? Math.max(0, Math.ceil(trend.length / 8) - 1)
+                                : Math.max(0, Math.ceil(trend.length / 10) - 1)} />
                 <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false}
                        tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v} />
-                <Tooltip content={<ChartTip />} cursor={{ stroke: '#dce3ed', strokeWidth: 1.5 }} />
+                <Tooltip content={<ChartTip />} cursor={{ stroke: '#dce3ed', strokeWidth: 1.5 }}
+                         labelFormatter={v => fmtTrendTick(v, trendFreq)} />
                 <Area type="monotone" dataKey="count" name="New Accounts" stroke="#1d4ed8" strokeWidth={2}
-                      fill="url(#areaGrad2)" dot={{ fill: '#1d4ed8', r: 4, strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 5 }} />
+                      fill="url(#areaGrad2)" dot={trendFreq === 'day' ? false : { fill: '#1d4ed8', r: 4, strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 5 }} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -506,18 +666,58 @@ function AccountsSection({ data, loading }) {
 
 // ─── Section: Deposits ────────────────────────────────────────────────────────
 
+const DEPOSIT_TYPE_COLORS = ['#0891b2', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0f766e', '#9333ea']
+const DEPOSIT_TYPE_ACCENTS = ['cyan', 'purple', 'green', 'amber', 'red', 'cyan', 'purple']
+const DEPOSIT_TYPE_ICONS   = { RD: '🔄', FD: '📋' }
+
 function DepositsSection({ data, loading }) {
   if (loading || !data) return <Spinner />
-  const branchChartData = data.branch_breakdown.map(b => ({ name: b.branch, td: b.td_count, rd: b.rd_count, hd: b.hd_count }))
+  const types = data.deposit_types || []
+  const branchChartData = data.branch_breakdown.map(b => {
+    const obj = { name: b.branch, td: b.td_count }
+    types.forEach(t => { obj[t.code] = b[t.code] || 0 })
+    return obj
+  })
+  const dynamicBranchCols = types.map(t => ({
+    key: t.code, label: t.label, numeric: true, render: r => fmtNum(r[t.code] || 0)
+  }))
   return (
     <>
       <div className="kpi-bar">
         <KpiCard icon="📄" label="Term Deposits (FD)"  value={fmtNum(data.td_count)}    sub={fmtCr(data.td_principal) + ' principal'} accent="blue"   />
-        <KpiCard icon="🔄" label="Recurring Deposits"  value={fmtNum(data.rd_count)}    sub="Active RD accounts"                      accent="cyan"   />
-        <KpiCard icon="🏠" label="Home Deposits"       value={fmtNum(data.hd_count)}    sub="Daily deposit scheme"                    accent="purple" />
-        <KpiCard icon="💰" label="Total Deposit Book"  value={fmtCr(data.td_principal)} sub={`${fmtNum(data.total_deposit_accounts)} accounts`}      accent="green"  />
+        {types.map((t, i) => (
+          <KpiCard key={t.code}
+            icon={DEPOSIT_TYPE_ICONS[t.nature] || '📋'}
+            label={t.label}
+            value={fmtNum(t.count)}
+            sub={`Active ${t.nature} accounts`}
+            accent={DEPOSIT_TYPE_ACCENTS[i % DEPOSIT_TYPE_ACCENTS.length]}
+          />
+        ))}
+        <KpiCard icon="💰" label="Total Deposit Book"  value={fmtCr(data.td_principal)} sub={`${fmtNum(data.total_deposit_accounts)} accounts`} accent="green" />
         <KpiCard icon="📅" label="Maturity Value (FD)" value={fmtCr(data.td_maturity)}  sub="Accumulated at maturity"                 accent="amber"  />
       </div>
+
+      {/* FD Maturity Warning strip */}
+      {(data.fd_maturing_7d > 0 || data.fd_maturing_30d > 0) && (
+        <div className="maturity-strip">
+          {data.fd_maturing_7d > 0 && (
+            <div className="maturity-chip maturity-urgent">
+              <span className="maturity-chip-label">Next 7 days</span>
+              <span className="maturity-chip-count">{fmtNum(data.fd_maturing_7d)} FDs</span>
+              <span className="maturity-chip-amt">{fmtCr(data.fd_maturing_7d_amt)}</span>
+            </div>
+          )}
+          {data.fd_maturing_30d > 0 && (
+            <div className="maturity-chip maturity-warn">
+              <span className="maturity-chip-label">Next 30 days</span>
+              <span className="maturity-chip-count">{fmtNum(data.fd_maturing_30d)} FDs</span>
+              <span className="maturity-chip-amt">{fmtCr(data.fd_maturing_30d_amt)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="two-col-grid">
         <Panel title="Deposit Accounts by Branch & Type" badge={`${fmtNum(data.total_deposit_accounts)} Total`}>
           <div style={{ height: 250 }}>
@@ -529,16 +729,18 @@ function DepositsSection({ data, loading }) {
                        tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
                 <Tooltip content={<ChartTip />} cursor={{ fill: 'rgba(29,78,216,0.04)' }} />
                 <Legend wrapperStyle={{ fontSize: 11, color: '#64748b' }} />
-                <Bar dataKey="td" name="Term Deposit"  fill="#1d4ed8" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="rd" name="Recurring Dep" fill="#0891b2" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="hd" name="Home Deposit"  fill="#7c3aed" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="td" name="Term Deposit" fill="#1d4ed8" radius={[3, 3, 0, 0]} />
+                {types.map((t, i) => (
+                  <Bar key={t.code} dataKey={t.code} name={t.label}
+                       fill={DEPOSIT_TYPE_COLORS[i % DEPOSIT_TYPE_COLORS.length]} radius={[3, 3, 0, 0]} />
+                ))}
               </BarChart>
             </ResponsiveContainer>
           </div>
         </Panel>
-        <Panel title="TD Maturity Schedule — 2026">
+        <Panel title={`TD Maturity Schedule — ${data.mat_year || 'Current Year'}`}>
           {data.maturity_trend.length === 0
-            ? <div className="empty-state">No maturity data for 2026</div>
+            ? <div className="empty-state">No maturity data for selected period</div>
             : (
               <div style={{ height: 250 }}>
                 <ResponsiveContainer width="100%" height="100%">
@@ -568,11 +770,10 @@ function DepositsSection({ data, loading }) {
       <Panel title="Branch-wise Deposit Summary" className="mt-panel">
         <BranchTable rows={data.branch_breakdown} columns={[
           { key: 'branch',         label: 'Branch' },
-          { key: 'td_count',       label: 'Term Deposits',   numeric: true, render: r => fmtNum(r.td_count) },
-          { key: 'td_principal',   label: 'FD Principal',    numeric: true, render: r => fmtCr(r.td_principal) },
-          { key: 'rd_count',       label: 'Recurring Dep.',  numeric: true, render: r => fmtNum(r.rd_count) },
-          { key: 'hd_count',       label: 'Home Deposits',   numeric: true, render: r => fmtNum(r.hd_count) },
-          { key: 'total_accounts', label: 'Total',           numeric: true, render: r => fmtNum(r.total_accounts), style: () => ({ fontWeight: 600 }) },
+          { key: 'td_count',       label: 'Term Deposits', numeric: true, render: r => fmtNum(r.td_count) },
+          { key: 'td_principal',   label: 'FD Principal',  numeric: true, render: r => fmtCr(r.td_principal) },
+          ...dynamicBranchCols,
+          { key: 'total_accounts', label: 'Total',         numeric: true, render: r => fmtNum(r.total_accounts), style: () => ({ fontWeight: 600 }) },
         ]} />
       </Panel>
     </>
@@ -582,22 +783,37 @@ function DepositsSection({ data, loading }) {
 // ─── Section: Advances ────────────────────────────────────────────────────────
 
 function AdvancesSection({ data, loading }) {
+  const [npaView, setNpaView] = useState('count')
+
   if (loading || !data) return <Spinner />
+
+  const npaRatio  = npaView === 'count' ? data.npa_ratio : data.npa_ratio_amount
+  const npaAccent = npaRatio <= 5 ? 'green' : npaRatio <= 10 ? 'amber' : 'red'
+  const npaSubLabel = npaView === 'count' ? 'by account count' : 'by sanction amount'
   const branchChartData = data.branch_breakdown.map(b => ({ name: b.branch, standard: b.standard, npa: b.npa_count }))
+
   return (
     <>
       <div className="kpi-bar">
-        <KpiCard icon="📑" label="Total Loan Accounts"   value={fmtNum(data.total)}    sub="All types"                             accent="blue"   />
-        <KpiCard icon="✅" label="Standard (Performing)" value={fmtNum(data.standard)} sub={fmtCr(data.total_sanction - data.npa_sanction)} accent="green" />
-        <KpiCard icon="⚠️" label="Stressed / NPA"       value={fmtNum(data.npa_count)} sub={fmtCr(data.npa_sanction) + ' exposure'} accent="red"   />
-        <KpiCard icon="💹" label="Total Sanction"        value={fmtCr(data.total_sanction)} sub="Portfolio value"                  accent="purple" />
-        <KpiCard icon="📊" label="NPA Ratio"             value={`${data.npa_ratio}%`}  sub="By account count"
-                 accent={data.npa_ratio <= 5 ? 'green' : data.npa_ratio <= 10 ? 'amber' : 'red'} />
+        <KpiCard icon="📑" label="Total Loan Accounts"   value={fmtNum(data.total)}      sub="All types"                              accent="blue"   />
+        <KpiCard icon="✅" label="Standard (Performing)" value={fmtNum(data.standard)}   sub={fmtCr(data.std_sanction)}               accent="green"  />
+        <KpiCard icon="⚠️" label="Overdue / NPA"         value={fmtNum(data.npa_count)}  sub={fmtCr(data.npa_sanction) + ' exposure'} accent="red"    />
+        <KpiCard icon="🕐" label="No Payment >90 Days"   value={fmtNum(data.overdue_90d)} sub="Loan accts, last txn date"             accent={data.overdue_90d > 0 ? 'amber' : 'green'} />
+        <KpiCard icon="💹" label="Total Sanction"        value={fmtCr(data.total_sanction)} sub="Portfolio value"                     accent="purple" />
       </div>
+
+      {data.new_in_period != null && (
+        <div className="period-strip">
+          <span className="period-strip-label">New loans in period:</span>
+          <span className="period-strip-val">{fmtNum(data.new_in_period)} accounts</span>
+          <span className="period-strip-amt">{fmtCr(data.new_sanction)} sanctioned</span>
+        </div>
+      )}
+
       <div className="two-col-grid">
         <Panel title="Standard vs NPA by Branch"
-               badge={`NPA ${data.npa_ratio}%`}
-               badgeVariant={data.npa_ratio <= 5 ? 'green' : data.npa_ratio <= 10 ? 'amber' : 'red'}>
+               badge={`NPA ${npaRatio}%`}
+               badgeVariant={npaAccent}>
           <div style={{ height: 250 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={branchChartData} margin={{ top: 8, right: 16, left: -8, bottom: 0 }} barCategoryGap="30%">
@@ -612,6 +828,7 @@ function AdvancesSection({ data, loading }) {
             </ResponsiveContainer>
           </div>
         </Panel>
+
         <Panel title="NPA Classification Breakdown">
           <div style={{ height: 250 }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -641,18 +858,38 @@ function AdvancesSection({ data, loading }) {
           </div>
         </Panel>
       </div>
+
       <Panel title="Branch-wise Advances Summary" className="mt-panel">
+        <div className="panel-toolbar">
+          <span className="panel-toolbar-label">NPA ratio view:</span>
+          <Toggle
+            options={[{ value: 'count', label: 'By Count' }, { value: 'amount', label: 'By Amount' }]}
+            value={npaView}
+            onChange={setNpaView}
+          />
+        </div>
         <BranchTable rows={data.branch_breakdown} columns={[
           { key: 'branch',      label: 'Branch' },
           { key: 'total',       label: 'Total Loans',    numeric: true, render: r => fmtNum(r.total) },
           { key: 'standard',    label: 'Standard',       numeric: true, render: r => fmtNum(r.standard),  style: () => ({ color: '#15803d' }) },
           { key: 'npa_count',   label: 'NPA / Stressed', numeric: true, render: r => fmtNum(r.npa_count), style: () => ({ color: '#dc2626' }) },
-          { key: 'npa_ratio',   label: 'NPA %',          numeric: true,
-            render: r => `${r.npa_ratio}%`,
-            style: r => ({ color: r.npa_ratio <= 5 ? '#15803d' : r.npa_ratio <= 10 ? '#b45309' : '#dc2626', fontWeight: 600 }) },
+          {
+            key: 'npa_ratio',
+            label: npaView === 'count' ? 'NPA % (Count)' : 'NPA % (Amount)',
+            numeric: true,
+            render: r => {
+              const v = npaView === 'count' ? r.npa_ratio : r.npa_ratio_amount
+              return `${v}%`
+            },
+            style: r => {
+              const v = npaView === 'count' ? r.npa_ratio : r.npa_ratio_amount
+              return { color: v <= 5 ? '#15803d' : v <= 10 ? '#b45309' : '#dc2626', fontWeight: 600 }
+            },
+          },
           { key: 'sanction_amt', label: 'Sanction Amt',  numeric: true, render: r => fmtCr(r.sanction_amt) },
         ]} />
       </Panel>
+
       <Panel title="Loan Type Breakdown" className="mt-panel">
         <BranchTable rows={data.type_breakdown} columns={[
           { key: 'name',   label: 'Loan Type' },
@@ -664,15 +901,113 @@ function AdvancesSection({ data, loading }) {
   )
 }
 
+// ─── Section: Alerts ──────────────────────────────────────────────────────────
+
+function AlertsSection({ data, loading }) {
+  if (loading || !data) return <Spinner />
+  const { alerts, summary } = data
+
+  return (
+    <>
+      <div className="kpi-bar">
+        <KpiCard icon="🚨" label="Critical"      value={summary.critical}  sub="Require immediate action" accent={summary.critical > 0 ? 'red' : 'green'} />
+        <KpiCard icon="⚠️" label="Warnings"      value={summary.warning}   sub="Monitor closely"          accent={summary.warning > 0 ? 'amber' : 'green'} />
+        <KpiCard icon="📊" label="NPA (Count)"   value={`${summary.npa_pct_count}%`}  sub="By account count"  accent={summary.npa_pct_count > 5 ? 'red' : summary.npa_pct_count > 3 ? 'amber' : 'green'} />
+        <KpiCard icon="💰" label="NPA (Amount)"  value={`${summary.npa_pct_amount}%`} sub="By sanction amount" accent={summary.npa_pct_amount > 5 ? 'red' : summary.npa_pct_amount > 3 ? 'amber' : 'green'} />
+        {summary.cd_ratio != null && (
+          <KpiCard icon="📈" label="CD Ratio" value={`${summary.cd_ratio}%`} sub="FD-based proxy"
+            accent={summary.cd_ratio > 75 ? 'red' : summary.cd_ratio < 60 ? 'amber' : 'green'} />
+        )}
+      </div>
+
+      <Panel
+        title="Active Alerts"
+        badge={`${alerts.length} Total`}
+        badgeVariant={summary.critical > 0 ? 'red' : summary.warning > 0 ? 'amber' : 'green'}
+      >
+        {alerts.length === 0 ? (
+          <div className="alerts-empty">
+            <span style={{ fontSize: 24 }}>✓</span>
+            <span>All metrics within thresholds — no active alerts</span>
+          </div>
+        ) : (
+          <div className="alerts-list">
+            {alerts.map(alert => {
+              const s = SEV_STYLE[alert.severity] || SEV_STYLE.info
+              return (
+                <div key={alert.id} className="alert-row" style={{ background: s.bg, borderLeftColor: s.border }}>
+                  <div className="alert-dot" style={{ background: s.dot }} />
+                  <div className="alert-body">
+                    <div className="alert-title" style={{ color: s.color }}>{alert.title}</div>
+                    <div className="alert-msg">{alert.message}</div>
+                  </div>
+                  <div className="alert-meta">
+                    <span className="alert-category">{alert.category}</span>
+                    {alert.value && <span className="alert-value" style={{ color: s.color }}>{alert.value}</span>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Panel>
+
+      {(summary.fd_maturing_7d > 0 || summary.fd_maturing_30d > 0) && (
+        <Panel title="FD Maturity Watch" className="mt-panel" badge="Liquidity Risk" badgeVariant="amber">
+          <div className="kpi-bar" style={{ paddingTop: 0, paddingBottom: 0 }}>
+            <KpiCard icon="📅" label="Maturing in 7 Days"
+              value={fmtNum(summary.fd_maturing_7d)}
+              sub={fmtCr(summary.fd_maturing_7d_amt) + ' at risk'}
+              accent={summary.fd_maturing_7d > 0 ? 'red' : 'green'} />
+            <KpiCard icon="📅" label="Maturing in 30 Days"
+              value={fmtNum(summary.fd_maturing_30d)}
+              sub={fmtCr(summary.fd_maturing_30d_amt) + ' to manage'}
+              accent={summary.fd_maturing_30d > 50 ? 'amber' : 'cyan'} />
+          </div>
+        </Panel>
+      )}
+    </>
+  )
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 const DEFAULT_FILTERS = {
   branch:   '',
-  fromDate: '2026-06-01',
-  toDate:   '2026-06-15',
+  fromDate: '',
+  toDate:   '',
 }
 
 export default function App() {
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('cbs_session')) } catch { return null }
+  })
+  const [bankInfo, setBankInfo] = useState({ bankName: '', initial: '' })
+
+  useEffect(() => {
+    fetch(`${API}/api/bank-info`).then(r => r.json()).then(setBankInfo).catch(() => {})
+  }, [])
+
+  function handleLogin(userData) { setUser(userData) }
+
+  function handleLogout() {
+    if (user?.token) {
+      fetch(`${API}/api/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: user.token }),
+      }).catch(() => {})
+    }
+    localStorage.removeItem('cbs_session')
+    setUser(null)
+  }
+
+  if (!user) return <Login onLogin={handleLogin} bankInfo={bankInfo} />
+
+  return <Dashboard user={user} onLogout={handleLogout} bankInfo={bankInfo} />
+}
+
+function Dashboard({ user, onLogout, bankInfo }) {
   const [section,   setSection]   = useState('overview')
   const [branches,  setBranches]  = useState([])
   const [filters,   setFilters]   = useState(DEFAULT_FILTERS)
@@ -682,6 +1017,7 @@ export default function App() {
   const [loans,     setLoans]     = useState(null)
   const [deposits,  setDeposits]  = useState(null)
   const [advances,  setAdvances]  = useState(null)
+  const [alertsData, setAlertsData] = useState(null)
 
   const [loading,   setLoading]   = useState(true)
   const [fetching,  setFetching]  = useState(false)
@@ -695,20 +1031,32 @@ export default function App() {
   const fetchAll = useCallback(async (f = filters) => {
     setFetching(true)
     setError(null)
-    const q = f.branch ? `?branch=${f.branch}` : ''
+
+    const params = new URLSearchParams()
+    if (f.branch)   params.set('branch',    f.branch)
+    if (f.fromDate) params.set('from_date', f.fromDate)
+    if (f.toDate)   params.set('to_date',   f.toDate)
+    const q = params.toString() ? `?${params.toString()}` : ''
+
+    // Alerts only needs branch filter
+    const alertParams = new URLSearchParams()
+    if (f.branch) alertParams.set('branch', f.branch)
+    const aq = alertParams.toString() ? `?${alertParams.toString()}` : ''
+
     try {
-      const [aRes, kRes, lRes, dRes, advRes] = await Promise.all([
+      const [aRes, kRes, lRes, dRes, advRes, alRes] = await Promise.all([
         fetch(`${API}/api/metrics/accounts${q}`),
         fetch(`${API}/api/metrics/kyc${q}`),
         fetch(`${API}/api/metrics/advances${q}`),
         fetch(`${API}/api/metrics/deposits${q}`),
         fetch(`${API}/api/metrics/advances${q}`),
+        fetch(`${API}/api/alerts${aq}`),
       ])
       if (!aRes.ok) throw new Error('API error')
-      const [a, k, l, d, adv] = await Promise.all([
-        aRes.json(), kRes.json(), lRes.json(), dRes.json(), advRes.json(),
+      const [a, k, l, d, adv, al] = await Promise.all([
+        aRes.json(), kRes.json(), lRes.json(), dRes.json(), advRes.json(), alRes.json(),
       ])
-      setAccounts(a); setKyc(k); setLoans(l); setDeposits(d); setAdvances(adv)
+      setAccounts(a); setKyc(k); setLoans(l); setDeposits(d); setAdvances(adv); setAlertsData(al)
       setUpdatedAt(new Date())
     } catch {
       setError('Unable to reach the API. Ensure the backend is running on port 8000.')
@@ -723,13 +1071,15 @@ export default function App() {
     fetchAll()
     const id = setInterval(() => fetchAll(), 60_000)
     return () => clearInterval(id)
-  }, [])   // only on mount; manual re-fetch on Apply
+  }, [])
 
   function handleApply(newFilters) {
     setFilters(newFilters)
     setLoading(true)
     fetchAll(newFilters)
   }
+
+  const criticalCount = alertsData?.summary?.critical ?? 0
 
   return (
     <div className="app-shell">
@@ -740,6 +1090,8 @@ export default function App() {
         filters={filters}
         setFilters={setFilters}
         onApply={handleApply}
+        bankInfo={bankInfo}
+        alertCount={criticalCount}
       />
 
       <div className="main-area">
@@ -750,15 +1102,18 @@ export default function App() {
           fetching={fetching}
           onRefresh={() => fetchAll(filters)}
           updatedAt={updatedAt}
+          user={user}
+          onLogout={onLogout}
         />
 
         <main className="page-content">
           {error && <div className="error-banner">{error}</div>}
 
-          {section === 'overview'  && <OverviewSection  accounts={accounts} kyc={kyc} loans={loans}  loading={loading} />}
-          {section === 'accounts'  && <AccountsSection  data={accounts}  loading={loading} />}
-          {section === 'deposits'  && <DepositsSection  data={deposits}  loading={loading} />}
-          {section === 'advances'  && <AdvancesSection  data={advances}  loading={loading} />}
+          {section === 'overview'  && <OverviewSection  accounts={accounts} kyc={kyc} loans={loans} alertsSummary={alertsData?.summary} loading={loading} />}
+          {section === 'accounts'  && <AccountsSection  data={accounts}   loading={loading} filters={filters} />}
+          {section === 'deposits'  && <DepositsSection  data={deposits}   loading={loading} />}
+          {section === 'advances'  && <AdvancesSection  data={advances}   loading={loading} />}
+          {section === 'alerts'    && <AlertsSection    data={alertsData} loading={loading} />}
         </main>
       </div>
     </div>

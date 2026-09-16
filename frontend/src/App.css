@@ -1194,3 +1194,712 @@ body {
   .nav-icon { width: 20px; height: 20px; color: rgba(255,255,255,0.55); }
   .sidebar-filters { display: none; }
 }
+
+/* ─── Login Page ──────────────────────────────────────── */
+
+.login-shell {
+  display: flex;
+  height: 100vh;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.login-left {
+  width: 380px;
+  min-width: 380px;
+  background: var(--navy);
+  display: flex;
+  flex-direction: column;
+  padding: 44px 44px 44px;
+  position: relative;
+  overflow: hidden;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  position: relative;
+  z-index: 1;
+}
+
+.login-logo-mark {
+  width: 46px;
+  height: 46px;
+  background: rgba(255,255,255,0.12);
+  border: 2px solid rgba(255,255,255,0.22);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -1px;
+  flex-shrink: 0;
+}
+
+.login-bank-name {
+  font-size: 20px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.5px;
+  line-height: 1;
+}
+
+.login-bank-sub {
+  font-size: 10.5px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 3px;
+  letter-spacing: 0.3px;
+}
+
+.login-left-body {
+  margin-top: auto;
+  margin-bottom: 40px;
+  position: relative;
+  z-index: 1;
+}
+
+.login-tagline-title {
+  font-size: 26px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.7px;
+  line-height: 1.25;
+  margin-bottom: 12px;
+}
+
+.login-tagline-desc {
+  font-size: 13px;
+  color: rgba(255,255,255,0.5);
+  line-height: 1.65;
+  max-width: 280px;
+  margin-bottom: 32px;
+}
+
+.login-stats {
+  display: flex;
+  gap: 24px;
+  padding-top: 24px;
+  border-top: 1px solid rgba(255,255,255,0.1);
+}
+
+.login-stat-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.5px;
+  line-height: 1;
+  margin-bottom: 5px;
+}
+
+.login-stat-lbl {
+  font-size: 10px;
+  color: rgba(255,255,255,0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  font-weight: 600;
+}
+
+.login-decor-a {
+  position: absolute;
+  bottom: -100px;
+  right: -100px;
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.06);
+  pointer-events: none;
+}
+
+.login-decor-b {
+  position: absolute;
+  bottom: -60px;
+  right: -60px;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+  pointer-events: none;
+}
+
+.login-right {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  background: var(--bg);
+}
+
+.login-form {
+  width: 100%;
+  max-width: 360px;
+}
+
+.login-form-header {
+  margin-bottom: 30px;
+}
+
+.login-form-mark {
+  width: 40px;
+  height: 40px;
+  background: var(--blue-lt);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--blue);
+  margin-bottom: 18px;
+}
+
+.login-form-header h2 {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.5px;
+  margin-bottom: 5px;
+}
+
+.login-form-header p {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.login-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--red-lt);
+  border: 1px solid #fecaca;
+  color: var(--red);
+  padding: 10px 13px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 20px;
+  flex-shrink: 0;
+}
+
+.login-field {
+  margin-bottom: 16px;
+}
+
+.login-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-sub);
+  margin-bottom: 7px;
+  letter-spacing: 0.1px;
+}
+
+.login-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.login-field-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--text-muted);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.login-input-wrap input {
+  width: 100%;
+  padding: 10px 40px 10px 38px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg-card);
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+}
+
+.login-input-wrap input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.1);
+}
+
+.login-input-wrap input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.login-input-wrap input::placeholder {
+  color: #94a3b8;
+}
+
+.login-pw-toggle {
+  position: absolute;
+  right: 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.login-pw-toggle:hover {
+  color: var(--text);
+}
+
+.login-btn {
+  width: 100%;
+  padding: 11px 0;
+  background: var(--navy);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.2px;
+  margin-top: 10px;
+  transition: background 0.15s, opacity 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.login-btn:hover:not(:disabled) {
+  background: var(--navy-mid);
+}
+
+.login-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.login-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+.login-footer-note {
+  margin-top: 24px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ─── Logout button in top bar ────────────────────────── */
+
+.logout-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 7px;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  margin-left: 6px;
+}
+
+.logout-btn:hover {
+  color: var(--red);
+  border-color: #fecaca;
+  background: var(--red-lt);
+}
+
+/* ─── Nav badge (alert count) ─────────────────────────── */
+
+.nav-badge {
+  margin-left: auto;
+  background: var(--red);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+/* ─── Alert banner (overview) ─────────────────────────── */
+
+.alert-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 16px;
+}
+
+.alert-banner.critical {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+}
+
+.alert-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  flex-shrink: 0;
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(0.75); }
+}
+
+.alert-banner-hint {
+  color: #ef4444;
+  font-weight: 400;
+  font-size: 12px;
+}
+
+/* ─── Alerts section ──────────────────────────────────── */
+
+.alerts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.alert-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 16px;
+  border-radius: 8px;
+  border-left: 4px solid transparent;
+}
+
+.alert-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+.alert-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.alert-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.alert-msg {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.alert-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.alert-category {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  background: rgba(0,0,0,0.05);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.alert-value {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.alerts-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 40px 20px;
+  color: var(--green);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* ─── Toggle group ────────────────────────────────────── */
+
+.toggle-group {
+  display: flex;
+  gap: 1px;
+  background: var(--border);
+  border-radius: 7px;
+  padding: 2px;
+}
+
+.toggle-btn {
+  padding: 5px 13px;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s;
+}
+
+.toggle-btn:hover { background: rgba(0,0,0,0.04); color: var(--text); }
+.toggle-btn.toggle-active { background: #fff; color: var(--navy); font-weight: 600; box-shadow: var(--shadow-sm); }
+
+/* ─── Panel toolbar ───────────────────────────────────── */
+
+.panel-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border-sub);
+  margin-bottom: 4px;
+}
+
+.panel-toolbar-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* ─── FD maturity strip (deposits) ───────────────────── */
+
+.maturity-strip {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.maturity-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.maturity-urgent {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.maturity-warn {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+.maturity-chip-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.maturity-urgent .maturity-chip-label { color: #b91c1c; }
+.maturity-warn   .maturity-chip-label { color: #92400e; }
+
+.maturity-chip-count {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.maturity-chip-amt {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+/* ─── Account status bar ─────────────────────────────── */
+
+.acct-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.acct-status-total {
+  display: flex;
+  flex-direction: column;
+  min-width: 110px;
+  border-right: 1px solid var(--border);
+  padding-right: 16px;
+}
+.acct-status-total-num {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+}
+.acct-status-total-lbl {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.acct-status-pills {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.acct-status-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  min-width: 80px;
+}
+.acct-status-pill-count {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.acct-status-pill-lbl {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+}
+.acct-status-toggle {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--blue);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.acct-status-toggle:hover { background: var(--blue-lt); }
+
+.acct-status-breakdown {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.acct-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.acct-status-row-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.acct-status-row-lbl {
+  width: 150px;
+  flex-shrink: 0;
+  color: var(--text);
+}
+.acct-status-row-bar-wrap {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-inset);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.acct-status-row-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.acct-status-row-pct {
+  width: 42px;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.acct-status-row-num {
+  width: 72px;
+  text-align: right;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ─── New loans in period strip (advances) ────────────── */
+
+.period-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--blue-lt);
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.period-strip-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.period-strip-val {
+  font-weight: 700;
+  color: var(--blue);
+}
+
+.period-strip-amt {
+  color: var(--text-sub);
+  margin-left: auto;
+  font-size: 12px;
+}
