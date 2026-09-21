@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ReferenceDot,
 } from 'recharts'
 import Login from './Login'
 import './App.css'
@@ -42,6 +42,7 @@ const ICONS = {
   deposits: <Icon rect={[1, 4, 22, 16, 2]} line={[[1, 10, 23, 10]]} />,
   advances: <Icon d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />,
   alerts:   <Icon d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />,
+  profitability: <Icon d="M12 20V10M18 20V4M6 20v-4" />,
   investments: <Icon line={[[18,20,18,10],[12,20,12,4],[6,20,6,14]]} />,
   borrowings: <Icon d="M23 6l-9.5 9.5-5-5L1 18" d2="M17 6h6v6" />,
   lc: <Icon d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />,
@@ -61,6 +62,7 @@ const NAV_MAIN = [
   { id: 'accounts', label: 'Accounts',            icon: ICONS.accounts,     active: true  },
   { id: 'advances', label: 'Loans & Advances',    icon: ICONS.advances,     active: true  },
   { id: 'deposits', label: 'Deposits',            icon: ICONS.deposits,     active: true  },
+  { id: 'profitability', label: 'Profitability',  icon: ICONS.profitability, active: true },
   { id: 'alerts',   label: 'Alerts',              icon: ICONS.alerts,       active: true  },
   { id: null,       label: 'Investments',         icon: ICONS.investments,  active: false },
   { id: null,       label: 'Borrowings',          icon: ICONS.borrowings,   active: false },
@@ -164,6 +166,7 @@ const SECTION_TITLES = {
   accounts: 'Accounts',
   deposits: 'Deposits',
   advances: 'Loans & Advances',
+  profitability: 'Profitability',
   alerts:   'Alerts & Exceptions',
 }
 
@@ -277,7 +280,7 @@ function ChartTip({ active, payload, label }) {
   return (
     <div className="chart-tooltip">
       {label && <div className="tooltip-label">{label}</div>}
-      {payload.map((p, i) => (
+      {payload.filter(p => p.value != null).map((p, i) => (
         <div key={i} className="tooltip-row">
           <span>{p.name}</span>
           <strong style={{ color: p.color }}>{fmtNum(p.value)}</strong>
@@ -340,6 +343,7 @@ function OverviewSection({ accounts, kyc, loans, alertsSummary, loading }) {
   const kycPie = kyc
     ? [{ name: 'Verified', value: kyc.verified }, { name: 'Pending', value: kyc.pending }]
     : []
+  const acctTrend = splitOngoingTrend(accounts?.trend, 'year')
 
   return (
     <>
@@ -369,7 +373,7 @@ function OverviewSection({ accounts, kyc, loans, alertsSummary, loading }) {
             <>
               <div style={{ height: 210 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={accounts.trend} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
+                  <AreaChart data={acctTrend.data} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
                     <defs>
                       <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#1d4ed8" stopOpacity={0.12} />
@@ -380,14 +384,28 @@ function OverviewSection({ accounts, kyc, loans, alertsSummary, loading }) {
                     <XAxis dataKey="period" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false}
                            tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v} />
-                    <Tooltip content={<ChartTip />} cursor={{ stroke: '#dce3ed', strokeWidth: 1.5 }} />
+                    <Tooltip content={<ProjectionTip freq="year" noun="year" projected={acctTrend.projected} lastPeriod={acctTrend.lastPeriod} />}
+                             cursor={{ stroke: '#dce3ed', strokeWidth: 1.5 }} />
                     <Area type="monotone" dataKey="count" name="New Accounts" stroke="#1d4ed8" strokeWidth={2}
                           fill="url(#areaGrad)"
                           dot={{ fill: '#1d4ed8', r: 4, strokeWidth: 2, stroke: '#fff' }}
                           activeDot={{ r: 5, fill: '#1d4ed8', stroke: '#fff', strokeWidth: 2 }} />
+                    {acctTrend.ongoing && (
+                      <>
+                        <ReferenceLine segment={[{ x: acctTrend.lastPeriod, y: acctTrend.actual }, { x: acctTrend.lastPeriod, y: acctTrend.projected }]}
+                                       stroke="#d97706" strokeWidth={2} strokeDasharray="5 3" ifOverflow="extendDomain" />
+                        <ReferenceDot x={acctTrend.lastPeriod} y={acctTrend.projected} r={5}
+                                      fill="#fff" stroke="#d97706" strokeWidth={2} ifOverflow="extendDomain" />
+                      </>
+                    )}
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
+              {acctTrend.ongoing && (
+                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+                  ⏳ Solid = actual so far ({fmtTrendTick(acctTrend.lastPeriod, 'year')}, ~{acctTrend.pct}% through the year) · Dashed = projected full-year total (~{fmtNum(acctTrend.projected)}).
+                </div>
+              )}
               <div className="type-chip-grid">
                 {accounts.type_distribution.map((t, i) => (
                   <div className="type-chip" key={i}>
@@ -504,6 +522,59 @@ function fmtTrendTick(val, freq) {
   return val
 }
 
+// True if `periodStr` (in the given trend granularity) is the bucket "today" falls in —
+// i.e. the trend's last point is still accumulating and not a finished year/month/day.
+function isPeriodOngoing(periodStr, freq) {
+  if (!periodStr) return false
+  const now = new Date()
+  const pad = n => String(n).padStart(2, '0')
+  if (freq === 'day')   return periodStr === `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+  if (freq === 'month') return periodStr === `${now.getFullYear()}${pad(now.getMonth() + 1)}`
+  return periodStr === String(now.getFullYear())
+}
+
+// % through the current day/month/year "today" falls, for the in-progress trend point.
+function elapsedPct(freq) {
+  const now = new Date()
+  if (freq === 'day')   return Math.round(((now.getHours() * 60 + now.getMinutes()) / 1440) * 100)
+  if (freq === 'month') return Math.round((now.getDate() / new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()) * 100)
+  const start = new Date(now.getFullYear(), 0, 1), end = new Date(now.getFullYear() + 1, 0, 1)
+  return Math.round(((now - start) / (end - start)) * 100)
+}
+
+// Extrapolates the still-running bucket's partial figure out to a full-period estimate.
+// Both the real point and the projection sit at the SAME x (the trend's last category) —
+// the projection is drawn as a marker + dashed connector above the real point, not a
+// separate x-axis tick.
+function splitOngoingTrend(trend, freq, key = 'count') {
+  const empty = { data: trend, ongoing: false, pct: null, projected: null, lastPeriod: null, actual: null }
+  if (!trend?.length) return empty
+  const last = trend[trend.length - 1]
+  if (!isPeriodOngoing(last.period, freq)) return empty
+  const pct = Math.max(elapsedPct(freq), 1)
+  const actual = last[key] || 0
+  const projected = Math.round(actual / (pct / 100))
+  return { data: trend, ongoing: true, pct, projected, lastPeriod: last.period, actual }
+}
+
+// Tooltip for a split trend chart: at the in-progress point (last x), shows both the
+// real figure so far and the projected full-period estimate alongside it.
+function ProjectionTip({ active, payload, label, freq, noun, projected, lastPeriod }) {
+  if (!active || !payload?.length) return null
+  const real = payload.find(x => x.dataKey === 'count')
+  if (real?.value == null) return null
+  const isLast = label === lastPeriod
+  return (
+    <div className="chart-tooltip">
+      <div className="tooltip-label">{fmtTrendTick(label, freq)}</div>
+      <div className="tooltip-row"><span>New Accounts{isLast ? ' (so far)' : ''}</span><strong>{fmtNum(real.value)}</strong></div>
+      {isLast && (
+        <div className="tooltip-row"><span>Projected full {noun}</span><strong style={{ color: '#d97706' }}>{fmtNum(projected)}</strong></div>
+      )}
+    </div>
+  )
+}
+
 function AccountsSection({ data, loading, filters }) {
   if (loading || !data) return <Spinner />
   const [showStatusPanel, setShowStatusPanel] = useState(false)
@@ -532,6 +603,8 @@ function AccountsSection({ data, loading, filters }) {
   const trendTitle = trendFreq === 'year' ? 'New Accounts Trend (by Year)'
                    : trendFreq === 'month' ? 'New Accounts by Month'
                    : 'New Accounts by Day'
+  const trendNoun = trendFreq === 'year' ? 'year' : trendFreq === 'month' ? 'month' : 'day'
+  const trendSplit = splitOngoingTrend(trend, trendFreq)
   const statusMap = Object.fromEntries((data.status_breakdown || []).map(s => [s.status, s.count]))
 
   const branchChartData = data.branch_breakdown.map(b => ({ name: b.branch, sb: b.sb, ca: b.ca }))
@@ -628,7 +701,7 @@ function AccountsSection({ data, loading, filters }) {
           <div style={{ height: 220, position: 'relative' }}>
             {trendLoading && <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', background:'rgba(255,255,255,.6)', zIndex:1 }}><Spinner /></div>}
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={trend} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
+              <AreaChart data={trendSplit.data} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
                 <defs>
                   <linearGradient id="areaGrad2" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%"   stopColor="#1d4ed8" stopOpacity={0.12} />
@@ -643,13 +716,26 @@ function AccountsSection({ data, loading, filters }) {
                                 : Math.max(0, Math.ceil(trend.length / 10) - 1)} />
                 <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false}
                        tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v} />
-                <Tooltip content={<ChartTip />} cursor={{ stroke: '#dce3ed', strokeWidth: 1.5 }}
-                         labelFormatter={v => fmtTrendTick(v, trendFreq)} />
+                <Tooltip content={<ProjectionTip freq={trendFreq} noun={trendNoun} projected={trendSplit.projected} lastPeriod={trendSplit.lastPeriod} />}
+                         cursor={{ stroke: '#dce3ed', strokeWidth: 1.5 }} />
                 <Area type="monotone" dataKey="count" name="New Accounts" stroke="#1d4ed8" strokeWidth={2}
                       fill="url(#areaGrad2)" dot={trendFreq === 'day' ? false : { fill: '#1d4ed8', r: 4, strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 5 }} />
+                {trendSplit.ongoing && (
+                  <>
+                    <ReferenceLine segment={[{ x: trendSplit.lastPeriod, y: trendSplit.actual }, { x: trendSplit.lastPeriod, y: trendSplit.projected }]}
+                                   stroke="#d97706" strokeWidth={2} strokeDasharray="5 3" ifOverflow="extendDomain" />
+                    <ReferenceDot x={trendSplit.lastPeriod} y={trendSplit.projected} r={5}
+                                  fill="#fff" stroke="#d97706" strokeWidth={2} ifOverflow="extendDomain" />
+                  </>
+                )}
               </AreaChart>
             </ResponsiveContainer>
           </div>
+          {trendSplit.ongoing && (
+            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+              ⏳ Solid = actual so far (~{trendSplit.pct}% through the {trendNoun}) · Dashed = projected full-{trendNoun} total (~{fmtNum(trendSplit.projected)}).
+            </div>
+          )}
         </Panel>
       </div>
       <Panel title="Branch-wise Account Summary" className="mt-panel">
@@ -738,7 +824,7 @@ function DepositsSection({ data, loading }) {
             </ResponsiveContainer>
           </div>
         </Panel>
-        <Panel title={`TD Maturity Schedule — ${data.mat_year || 'Current Year'}`}>
+        <Panel title={`TD Maturity Ladder — ${data.maturity_window || 'Next 6 Months'}`}>
           {data.maturity_trend.length === 0
             ? <div className="empty-state">No maturity data for selected period</div>
             : (
@@ -746,7 +832,7 @@ function DepositsSection({ data, loading }) {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={data.maturity_trend} margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" vertical={false} />
-                    <XAxis dataKey="quarter" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <XAxis dataKey="month" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
                     <Tooltip cursor={{ fill: 'rgba(29,78,216,0.04)' }}
                              content={({ active, payload, label }) => {
@@ -796,9 +882,10 @@ function AdvancesSection({ data, loading }) {
     <>
       <div className="kpi-bar">
         <KpiCard icon="📑" label="Total Loan Accounts"   value={fmtNum(data.total)}      sub="All types"                              accent="blue"   />
-        <KpiCard icon="✅" label="Standard (Performing)" value={fmtNum(data.standard)}   sub={fmtCr(data.std_sanction)}               accent="green"  />
-        <KpiCard icon="⚠️" label="Overdue / NPA"         value={fmtNum(data.npa_count)}  sub={fmtCr(data.npa_sanction) + ' exposure'} accent="red"    />
-        <KpiCard icon="🕐" label="No Payment >90 Days"   value={fmtNum(data.overdue_90d)} sub="Loan accts, last txn date"             accent={data.overdue_90d > 0 ? 'amber' : 'green'} />
+        <KpiCard icon="✅" label="Standard (Performing)" value={fmtNum(data.standard)}   sub={`of ${fmtNum(data.total)} accounts`}    accent="green"  />
+        <KpiCard icon="⚠️" label="Gross NPA"             value={data.npa_ready === false ? '—' : fmtNum(data.npa_count)}
+                 sub={data.npa_ready === false ? 'Loading NPA data — refresh shortly' : fmtCr(data.npa_sanction) + ' outstanding'} accent="red"  />
+        <KpiCard icon="🕐" label="Dormant (No Txn >90d)" value={fmtNum(data.dormant)}    sub="Loan accounts"                          accent={data.dormant > 0 ? 'amber' : 'green'} />
         <KpiCard icon="💹" label="Total Sanction"        value={fmtCr(data.total_sanction)} sub="Portfolio value"                     accent="purple" />
       </div>
 
@@ -901,6 +988,199 @@ function AdvancesSection({ data, loading }) {
   )
 }
 
+// ─── Section: Profitability ───────────────────────────────────────────────────
+
+function pctDelta(cur, prior) {
+  if (cur == null || prior == null || prior === 0) return null
+  return ((cur - prior) / Math.abs(prior)) * 100
+}
+
+function DeltaTag({ cur, prior }) {
+  const d = pctDelta(cur, prior)
+  if (d == null) return null
+  const up = d >= 0
+  return (
+    <span style={{ color: up ? '#15803d' : '#dc2626', fontWeight: 600 }}>
+      {up ? '▲' : '▼'} {Math.abs(d).toFixed(1)}% vs prior period
+    </span>
+  )
+}
+
+function PeriodBadge({ complete, elapsedPct, size = 'md' }) {
+  if (complete) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: size === 'sm' ? 11 : 12,
+                     fontWeight: 600, color: '#15803d' }}>
+        ✓ Closed period
+      </span>
+    )
+  }
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: size === 'sm' ? 11 : 12,
+                   fontWeight: 600, color: '#b45309', background: '#fffbeb', border: '1px solid #fcd34d',
+                   borderRadius: 999, padding: '2px 8px' }}>
+        ⏳ In progress{elapsedPct != null ? ` · ${elapsedPct}% elapsed` : ''}
+    </span>
+  )
+}
+
+function ProfitabilitySection({ data, warmingUp, loading, period, onPeriodChange }) {
+  if (loading && !data) return <Spinner />
+
+  if (warmingUp || !data) {
+    return (
+      <Panel title="Profitability">
+        <div style={{ padding: '32px 16px', textAlign: 'center', color: '#64748b' }}>
+          <div style={{ fontSize: 28, marginBottom: 8 }}>⏳</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Profitability metrics are warming up</div>
+          <div>The P&amp;L, balance and NPA jobs run once at startup — this can take up to a minute on a large bank. Try refreshing shortly.</div>
+        </div>
+      </Panel>
+    )
+  }
+
+  const { pl, pl_prior, trend, balances, npa, ratios, warnings } = data
+  const npaAccent = npa.gross_pct == null ? 'blue' : npa.gross_pct <= 5 ? 'green' : npa.gross_pct <= 10 ? 'amber' : 'red'
+  const cdAccent  = ratios.cd_ratio_pct == null ? 'blue' : (ratios.cd_ratio_pct >= 60 && ratios.cd_ratio_pct <= 75) ? 'green' : 'amber'
+  const npaAccounts = Object.values(npa.by_class).reduce((s, c) => s + (c.accounts || 0), 0)
+
+  const plRows = [
+    { label: 'Total Income',       cur: pl.total_income,      prior: pl_prior.total_income },
+    { label: '　Interest Income',  cur: pl.interest_income,   prior: pl_prior.interest_income },
+    { label: '　Other Income',     cur: pl.other_income,      prior: pl_prior.other_income },
+    { label: 'Total Expenditure',  cur: pl.total_expenditure, prior: pl_prior.total_expenditure },
+    { label: '　Interest Expense', cur: pl.interest_expense,  prior: pl_prior.interest_expense },
+    { label: '　Other Expenditure (incl. provisions & tax)', cur: pl.other_expenditure, prior: pl_prior.other_expenditure },
+    { label: 'Net Interest Income', cur: pl.nii,              prior: pl_prior.nii,  strong: true },
+    { label: 'Net Profit',          cur: pl.net_profit,       prior: pl_prior.net_profit, strong: true },
+  ]
+
+  return (
+    <>
+      {warnings?.length > 0 && (
+        <div className="error-banner" style={{ marginBottom: 12 }}>
+          {warnings.map((w, i) => <div key={i}>{w}</div>)}
+        </div>
+      )}
+
+      <div className="panel-toolbar" style={{ marginBottom: 12, flexWrap: 'wrap', rowGap: 8 }}>
+        <span className="panel-toolbar-label">Period:</span>
+        <Toggle
+          options={[{ value: 'ytd', label: 'Year to Date' }, { value: 'fy', label: `FY ${data.period.from?.slice(0,4)}` }]}
+          value={period}
+          onChange={onPeriodChange}
+        />
+        <PeriodBadge complete={data.period.complete} elapsedPct={data.period.elapsed_pct} />
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#94a3b8' }}>
+          {fmtDate(data.period.from)} – {fmtDate(data.period.to)}
+        </span>
+      </div>
+
+      {!data.period.complete && (
+        <div style={{ fontSize: 12, color: '#b45309', background: '#fffbeb', border: '1px solid #fcd34d',
+                      borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
+          ⏳ This period is still running — the figures below (and every tile marked "in progress") will keep
+          changing until it closes. Interest is posted quarterly, so income/NII/Net Profit can jump sharply
+          once the current quarter's postings land.
+        </div>
+      )}
+
+      <div className="kpi-bar">
+        <KpiCard icon="💰" label="Net Profit"
+                 value={fmtCr(pl.net_profit)}
+                 sub={<>{!data.period.complete && <span style={{ color: '#b45309', fontWeight: 600 }}>⏳ in progress · </span>}<DeltaTag cur={pl.net_profit} prior={pl_prior.net_profit} /></>}
+                 accent={pl.net_profit >= 0 ? 'green' : 'red'} />
+        <KpiCard icon="📊" label="Net Interest Income"
+                 value={fmtCr(pl.nii)}
+                 sub={`${fmtCr(pl.interest_income)} / ${fmtCr(pl.interest_expense)}${!data.period.complete ? ' · in progress' : ''}`}
+                 accent="blue" />
+        <KpiCard icon="💸" label="Cost of Funds"
+                 value={ratios.cost_of_funds_pct != null ? `${ratios.cost_of_funds_pct}%` : '—'}
+                 sub={ratios.cost_of_funds_window ? `Trailing 4 completed qtrs: ${ratios.cost_of_funds_window}` : 'Needs 4 completed quarters'}
+                 accent="purple" />
+        <KpiCard icon="⚠️" label="Gross NPA"
+                 value={npa.gross_pct != null ? `${npa.gross_pct}%` : '—'}
+                 sub={`${fmtCr(npa.gross)} · ${fmtNum(npaAccounts)} accounts · as of today`}
+                 accent={npaAccent} />
+        <KpiCard icon="🏦" label="CD Ratio"
+                 value={ratios.cd_ratio_pct != null ? `${ratios.cd_ratio_pct}%` : '—'}
+                 sub={`${fmtCr(balances.deposits.total)} dep / ${fmtCr(balances.advances.total)} adv · as of today`}
+                 accent={cdAccent} />
+      </div>
+
+      <div className="two-col-grid">
+        <Panel title="P&L Summary"
+               badge={data.period.type === 'ytd' ? 'YTD' : 'FY'}
+               className="mt-panel">
+          <BranchTable rows={plRows} columns={[
+            { key: 'label', label: 'Line' },
+            { key: 'cur',   label: data.period.complete ? 'Current' : 'Current (running)', numeric: true, render: r => fmtCr(r.cur), style: r => r.strong ? { fontWeight: 700 } : {} },
+            { key: 'prior', label: 'Prior Period', numeric: true, render: r => fmtCr(r.prior) },
+          ]} />
+        </Panel>
+
+        <Panel title="Quarterly Trend" className="mt-panel">
+          <div style={{ height: 260 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={trend} margin={{ top: 8, right: 16, left: -8, bottom: 0 }} barCategoryGap="30%">
+                <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" vertical={false} />
+                <XAxis dataKey="period" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false}
+                       tickFormatter={v => trend.find(t => t.period === v)?.complete === false ? `${v} ⏳` : v} />
+                <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false}
+                       tickFormatter={v => `${(v / 1e7).toFixed(1)}`} />
+                <Tooltip content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null
+                  const d = payload[0]?.payload
+                  return (
+                    <div className="chart-tooltip">
+                      <div className="tooltip-label">{label}{d?.complete === false ? ' — in progress' : ''}</div>
+                      <div className="tooltip-row"><span>NII</span><strong>{fmtCr(d?.nii)}</strong></div>
+                      <div className="tooltip-row"><span>Net Profit</span><strong>{fmtCr(d?.net_profit)}</strong></div>
+                      {d?.complete === false && (
+                        <div className="tooltip-row"><span>Quarter elapsed</span><strong>{d?.elapsed_pct}%</strong></div>
+                      )}
+                    </div>
+                  )
+                }} cursor={{ fill: 'rgba(29,78,216,0.04)' }} />
+                <Legend wrapperStyle={{ fontSize: 11, color: '#64748b' }} />
+                <Bar dataKey="nii" name="NII" radius={[3, 3, 0, 0]}>
+                  {trend.map((t, i) => (
+                    <Cell key={i} fill="#1d4ed8" fillOpacity={t.complete === false ? 0.4 : 1}
+                          stroke={t.complete === false ? '#1d4ed8' : 'none'} strokeDasharray={t.complete === false ? '3 2' : ''} />
+                  ))}
+                </Bar>
+                <Bar dataKey="net_profit" name="Net Profit" radius={[3, 3, 0, 0]}>
+                  {trend.map((t, i) => (
+                    <Cell key={i} fill="#15803d" fillOpacity={t.complete === false ? 0.4 : 1}
+                          stroke={t.complete === false ? '#15803d' : 'none'} strokeDasharray={t.complete === false ? '3 2' : ''} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          {trend.some(t => t.complete === false) && (
+            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+              ⏳ Hatched bar = quarter still running ({trend.find(t => t.complete === false)?.elapsed_pct}% elapsed) — not comparable to completed quarters yet.
+            </div>
+          )}
+        </Panel>
+      </div>
+
+      <Panel title="NPA by Class" className="mt-panel">
+        <BranchTable rows={[
+          { label: 'Sub-Standard', ...npa.by_class.sub_standard },
+          { label: 'Doubtful',     ...npa.by_class.doubtful },
+          { label: 'Loss',         ...npa.by_class.loss },
+        ]} columns={[
+          { key: 'label',    label: 'Class' },
+          { key: 'accounts', label: 'Accounts', numeric: true, render: r => fmtNum(r.accounts) },
+          { key: 'amount',   label: 'Outstanding', numeric: true, render: r => fmtCr(r.amount) },
+        ]} />
+      </Panel>
+    </>
+  )
+}
+
 // ─── Section: Alerts ──────────────────────────────────────────────────────────
 
 function AlertsSection({ data, loading }) {
@@ -915,7 +1195,7 @@ function AlertsSection({ data, loading }) {
         <KpiCard icon="📊" label="NPA (Count)"   value={`${summary.npa_pct_count}%`}  sub="By account count"  accent={summary.npa_pct_count > 5 ? 'red' : summary.npa_pct_count > 3 ? 'amber' : 'green'} />
         <KpiCard icon="💰" label="NPA (Amount)"  value={`${summary.npa_pct_amount}%`} sub="By sanction amount" accent={summary.npa_pct_amount > 5 ? 'red' : summary.npa_pct_amount > 3 ? 'amber' : 'green'} />
         {summary.cd_ratio != null && (
-          <KpiCard icon="📈" label="CD Ratio" value={`${summary.cd_ratio}%`} sub="FD-based proxy"
+          <KpiCard icon="📈" label="CD Ratio" value={`${summary.cd_ratio}%`} sub="Closing balances, as of today"
             accent={summary.cd_ratio > 75 ? 'red' : summary.cd_ratio < 60 ? 'amber' : 'green'} />
         )}
       </div>
@@ -1018,6 +1298,9 @@ function Dashboard({ user, onLogout, bankInfo }) {
   const [deposits,  setDeposits]  = useState(null)
   const [advances,  setAdvances]  = useState(null)
   const [alertsData, setAlertsData] = useState(null)
+  const [profitability, setProfitability] = useState(null)
+  const [profPeriod, setProfPeriod] = useState('ytd')
+  const [profWarmingUp, setProfWarmingUp] = useState(false)
 
   const [loading,   setLoading]   = useState(true)
   const [fetching,  setFetching]  = useState(false)
@@ -1073,6 +1356,24 @@ function Dashboard({ user, onLogout, bankInfo }) {
     return () => clearInterval(id)
   }, [])
 
+  const fetchProfitability = useCallback(async () => {
+    const params = new URLSearchParams({ period: profPeriod })
+    if (filters.branch) params.set('branch', filters.branch)
+    try {
+      const res = await fetch(`${API}/api/metrics/profitability?${params.toString()}`)
+      if (res.status === 503) { setProfWarmingUp(true); return }
+      if (!res.ok) return
+      setProfWarmingUp(false)
+      setProfitability(await res.json())
+    } catch { /* profitability is best-effort; other sections still work */ }
+  }, [filters.branch, profPeriod])
+
+  useEffect(() => {
+    fetchProfitability()
+    const id = setInterval(fetchProfitability, 60_000)
+    return () => clearInterval(id)
+  }, [fetchProfitability])
+
   function handleApply(newFilters) {
     setFilters(newFilters)
     setLoading(true)
@@ -1100,7 +1401,7 @@ function Dashboard({ user, onLogout, bankInfo }) {
           filters={filters}
           branches={branches}
           fetching={fetching}
-          onRefresh={() => fetchAll(filters)}
+          onRefresh={() => { fetchAll(filters); fetchProfitability() }}
           updatedAt={updatedAt}
           user={user}
           onLogout={onLogout}
@@ -1113,6 +1414,15 @@ function Dashboard({ user, onLogout, bankInfo }) {
           {section === 'accounts'  && <AccountsSection  data={accounts}   loading={loading} filters={filters} />}
           {section === 'deposits'  && <DepositsSection  data={deposits}   loading={loading} />}
           {section === 'advances'  && <AdvancesSection  data={advances}   loading={loading} />}
+          {section === 'profitability' && (
+            <ProfitabilitySection
+              data={profitability}
+              warmingUp={profWarmingUp}
+              loading={loading}
+              period={profPeriod}
+              onPeriodChange={setProfPeriod}
+            />
+          )}
           {section === 'alerts'    && <AlertsSection    data={alertsData} loading={loading} />}
         </main>
       </div>
