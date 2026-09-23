@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ReferenceDot,
@@ -7,6 +7,9 @@ import Login from './Login'
 import './App.css'
 
 const API = import.meta.env.VITE_API_URL ?? ''
+
+// Recharts Area draw-in animation duration (ms) — projected-pin reveal is timed to fire after this.
+const AREA_ANIM_MS = 1500
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +22,15 @@ function fmtCr(n) {
   return `₹${v.toLocaleString('en-IN')}`
 }
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+// `ready` gates a figure that's genuinely 0 (or absent) until a background job's
+// first run completes — without it a 0 read as real data during warm-up.
+const fmtPct = (n, ready = true) => (!ready || n == null) ? '—' : `${n}%`
+const shiftYear = (d, years) => {
+  if (!d) return d
+  const dt = new Date(d)
+  dt.setFullYear(dt.getFullYear() + years)
+  return dt.toISOString().slice(0, 10)
+}
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
 
@@ -152,7 +164,6 @@ function Sidebar({ section, setSection, branches, filters, setFilters, onApply, 
           <select value={draft.branch} onChange={e => {
             const newBranch = e.target.value
             setDraft(d => ({ ...d, branch: newBranch }))
-            onApply({ ...filters, branch: newBranch })
           }}>
             <option value="">All Branches</option>
             {branches.filter(b => b.code !== '90').map(b => (
@@ -192,7 +203,19 @@ const SECTION_TITLES = {
   investments: 'Investments',
 }
 
-function TopHeader({ section, filters, branches, fetching, onRefresh, updatedAt, user, onLogout }) {
+function JobsStatusPill({ jobsStatus }) {
+  if (!jobsStatus || jobsStatus.ready) return null
+  const pending = Object.values(jobsStatus.jobs || {}).filter(j => !j.ready)
+  if (pending.length === 0) return null
+  return (
+    <div className="jobs-status-pill" title={`Still loading: ${pending.map(j => j.label).join(', ')} — figures that depend on this will show "—" until it finishes.`}>
+      <span className="jobs-status-dot" />
+      <span>Syncing {pending.map(j => j.label).join(', ')}…</span>
+    </div>
+  )
+}
+
+function TopHeader({ section, filters, branches, fetching, onRefresh, updatedAt, user, onLogout, jobsStatus }) {
   const branchLabel = filters.branch
     ? (branches.find(b => b.code === filters.branch)?.name || filters.branch)
     : 'All Branches'
@@ -205,6 +228,7 @@ function TopHeader({ section, filters, branches, fetching, onRefresh, updatedAt,
     <header className="top-bar">
       <div className="top-bar-left">
         <h1 className="page-title">{SECTION_TITLES[section] || 'Dashboard'}</h1>
+        <JobsStatusPill jobsStatus={jobsStatus} />
       </div>
       <div className="top-bar-right">
         {filters.toDate && (
@@ -317,7 +341,7 @@ function ChartTip({ active, payload, label, formatter = fmtNum }) {
   )
 }
 
-function BranchTable({ rows, columns, sortable = false }) {
+function BranchTable({ rows, columns, sortable = false, className = '' }) {
   const [sort, setSort] = useState(null) // { key, dir: 1 | -1 }
 
   function toggleSort(key) {
@@ -336,7 +360,7 @@ function BranchTable({ rows, columns, sortable = false }) {
     : rows
 
   return (
-    <div className="data-table-wrap">
+    <div className={`data-table-wrap ${className}`}>
       <table className="data-table">
         <thead>
           <tr>
@@ -385,13 +409,58 @@ function Toggle({ options, value, onChange }) {
 
 // ─── Section: Overview ────────────────────────────────────────────────────────
 
-function OverviewSection({ accounts, kyc, loans, alertsSummary, loading }) {
+const RATIO_STATUS_STYLE = {
+  compliant: { badge: 'green', label: 'Compliant',     accent: 'green' },
+  tight:     { badge: 'amber', label: 'Near Minimum',  accent: 'amber' },
+  breach:    { badge: 'red',   label: 'Below Minimum', accent: 'red' },
+  unknown:   { badge: 'blue',  label: 'Not Tracked',   accent: 'blue' },
+}
+
+function CrrCard({ investments }) {
+  const crr = investments?.crr
+  if (!crr) return null
+  const crrStyle = RATIO_STATUS_STYLE[crr?.status] || RATIO_STATUS_STYLE.unknown
+  const crrSub = crr?.crr_pct != null
+    ? `Min ${crr.minimum_pct}% (w.e.f. ${fmtDate(crr.minimum_pct_wef)}) · approx.`
+    : crr?.error ? 'Calculation error — see backend logs' : 'Warming up… (first run takes a few minutes)'
+  return (
+    <KpiCard icon={ICONS.shield} label="CRR"
+             value={crr?.crr_pct != null ? `${crr.crr_pct}%` : '—'}
+             sub={crrSub} accent={crrStyle.accent} />
+  )
+}
+
+function SlrOverviewCard({ investments }) {
+  const slr = investments?.slr
+  if (!slr) return null
+  const slrStyle = RATIO_STATUS_STYLE[slr?.status] || RATIO_STATUS_STYLE.unknown
+  const slrSub = slr?.slr_pct != null ? `Min ${slr.minimum_pct}% — RBI norm for UCBs` : 'Warming up…'
+  return (
+    <KpiCard icon={ICONS.shield} label="SLR"
+             value={slr?.slr_pct != null ? `${slr.slr_pct}%` : '—'}
+             sub={slrSub} accent={slrStyle.accent} />
+  )
+}
+
+function OverviewSection({ accounts, kyc, loans, alertsSummary, investments, loading }) {
   const kycColor  = kyc?.compliance_rate >= 95 ? 'green' : kyc?.compliance_rate >= 85 ? 'amber' : 'red'
-  const npaAccent = loans?.npa_ratio <= 5 ? 'green' : loans?.npa_ratio <= 10 ? 'amber' : 'red'
+  const npaReady = loans?.npa_ready !== false
+  const npaAccent = !npaReady ? 'blue' : loans?.npa_ratio_amount <= 5 ? 'green' : loans?.npa_ratio_amount <= 10 ? 'amber' : 'red'
   const kycPie = kyc
     ? [{ name: 'Verified', value: kyc.verified }, { name: 'Pending', value: kyc.pending }]
     : []
   const acctTrend = splitOngoingTrend(accounts?.trend, 'year')
+  const [pinVisible, setPinVisible] = useState(false)
+  const acctChartWrapRef = useRef(null)
+  useEffect(() => {
+    setPinVisible(false)
+    if (!acctTrend.ongoing) return
+    const t = setTimeout(() => setPinVisible(true), AREA_ANIM_MS)
+    return () => clearTimeout(t)
+  }, [acctTrend.ongoing, acctTrend.lastPeriod, acctTrend.projected])
+  useEffect(() => {
+    if (pinVisible) growProjectedPin(acctChartWrapRef.current)
+  }, [pinVisible])
 
   return (
     <>
@@ -410,7 +479,10 @@ function OverviewSection({ accounts, kyc, loans, alertsSummary, loading }) {
         <KpiCard icon={ICONS.clipboard} label="Total Accounts"      value={fmtNum(accounts?.total)} sub={`${fmtNum(accounts?.sb_total)} SB · ${fmtNum(accounts?.ca_total)} CA`} accent="blue" />
         <KpiCard icon={ICONS.trendingUp} label="New in Period"       value={fmtNum(accounts?.new_in_period)} sub={accounts?.period_label || 'All time'} accent="cyan" />
         <KpiCard icon={ICONS.checkCircle} label="KYC Compliance"      value={kyc ? `${kyc.compliance_rate}%` : null} sub={`${fmtNum(kyc?.pending)} pending`} accent={kycColor} />
-        <KpiCard icon={ICONS.alertTriangle} label="NPA Ratio"           value={loans ? `${loans.npa_ratio}%` : null} sub={`${fmtNum(loans?.npa_count)} stressed (by count)`} accent={npaAccent} />
+        <KpiCard icon={ICONS.alertTriangle} label="NPA Ratio"           value={loans ? fmtPct(loans.npa_ratio_amount, npaReady) : null}
+                 sub={!loans ? null : !npaReady ? 'Syncing NPA data…' : `${loans.npa_ratio}% by count · ${fmtNum(loans.npa_count)} stressed`} accent={npaAccent} />
+        <CrrCard investments={investments} />
+        <SlrOverviewCard investments={investments} />
       </div>
 
       <div className="main-grid">
@@ -419,7 +491,7 @@ function OverviewSection({ accounts, kyc, loans, alertsSummary, loading }) {
                className="panel-accounts">
           {loading || !accounts ? <Spinner /> : (
             <>
-              <div style={{ height: 210 }}>
+              <div style={{ height: 210 }} ref={acctChartWrapRef}>
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={acctTrend.data} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
                     <defs>
@@ -437,13 +509,16 @@ function OverviewSection({ accounts, kyc, loans, alertsSummary, loading }) {
                     <Area type="monotone" dataKey="count" name="New Accounts" stroke="#1d4ed8" strokeWidth={2}
                           fill="url(#areaGrad)"
                           dot={{ fill: '#1d4ed8', r: 4, strokeWidth: 2, stroke: '#fff' }}
-                          activeDot={{ r: 5, fill: '#1d4ed8', stroke: '#fff', strokeWidth: 2 }} />
-                    {acctTrend.ongoing && (
+                          activeDot={{ r: 5, fill: '#1d4ed8', stroke: '#fff', strokeWidth: 2 }}
+                          animationDuration={AREA_ANIM_MS} />
+                    {acctTrend.ongoing && pinVisible && (
                       <>
                         <ReferenceLine segment={[{ x: acctTrend.lastPeriod, y: acctTrend.actual }, { x: acctTrend.lastPeriod, y: acctTrend.projected }]}
-                                       stroke="#d97706" strokeWidth={2} strokeDasharray="5 3" ifOverflow="extendDomain" />
+                                       stroke="#d97706" strokeWidth={2} strokeDasharray="5 3" ifOverflow="extendDomain"
+                                       className="projected-pin-line" />
                         <ReferenceDot x={acctTrend.lastPeriod} y={acctTrend.projected} r={5}
-                                      fill="#fff" stroke="#d97706" strokeWidth={2} ifOverflow="extendDomain" />
+                                      fill="#fff" stroke="#d97706" strokeWidth={2} ifOverflow="extendDomain"
+                                      className="projected-pin-dot" />
                       </>
                     )}
                   </AreaChart>
@@ -496,8 +571,12 @@ function OverviewSection({ accounts, kyc, loans, alertsSummary, loading }) {
                   <div className="kyc-stat-lbl">Verified</div>
                 </div>
                 <div className="kyc-stat-box">
-                  <div className="kyc-stat-val" style={{ color: C.red }}>{fmtNum(kyc.pending)}</div>
-                  <div className="kyc-stat-lbl">Pending</div>
+                  <div className="kyc-stat-val" style={{ color: C.amber }}>{fmtNum(kyc.awaiting_verification)}</div>
+                  <div className="kyc-stat-lbl">Awaiting Verification</div>
+                </div>
+                <div className="kyc-stat-box">
+                  <div className="kyc-stat-val" style={{ color: C.red }}>{fmtNum(kyc.no_kyc_record)}</div>
+                  <div className="kyc-stat-lbl">No KYC Record</div>
                 </div>
               </div>
             </>
@@ -505,17 +584,17 @@ function OverviewSection({ accounts, kyc, loans, alertsSummary, loading }) {
         </Panel>
 
         <Panel title="Loan Portfolio — NPA Classification"
-               badge={loans ? `NPA ${loans.npa_ratio}%` : undefined}
-               badgeVariant={loans?.npa_ratio <= 5 ? 'green' : loans?.npa_ratio <= 10 ? 'amber' : 'red'}
+               badge={loans ? `NPA ${fmtPct(loans.npa_ratio_amount, npaReady)}` : undefined}
+               badgeVariant={npaAccent}
                className="panel-loans">
           {loading || !loans ? <Spinner /> : (
             <>
               <div className="loan-summary">
                 <div className="loan-kpi"><span className="lkpi-val">{fmtNum(loans.total)}</span><span className="lkpi-lbl">Total Loans</span></div>
                 <div className="loan-kpi"><span className="lkpi-val" style={{ color: C.green }}>{fmtNum(loans.standard)}</span><span className="lkpi-lbl">Standard</span></div>
-                <div className="loan-kpi"><span className="lkpi-val" style={{ color: C.red }}>{fmtNum(loans.npa_count)}</span><span className="lkpi-lbl">Stressed</span></div>
+                <div className="loan-kpi"><span className="lkpi-val" style={{ color: C.red }}>{npaReady ? fmtNum(loans.npa_count) : '—'}</span><span className="lkpi-lbl">Stressed</span></div>
                 <div className="loan-kpi"><span className="lkpi-val">{fmtCr(loans.total_sanction)}</span><span className="lkpi-lbl">Total Sanction</span></div>
-                <div className="loan-kpi"><span className="lkpi-val" style={{ color: C.red }}>{fmtCr(loans.npa_sanction)}</span><span className="lkpi-lbl">NPA Exposure</span></div>
+                <div className="loan-kpi"><span className="lkpi-val" style={{ color: C.red }}>{npaReady ? fmtCr(loans.npa_sanction) : '—'}</span><span className="lkpi-lbl">NPA Exposure</span></div>
               </div>
               <div style={{ height: 200 }}>
                 <ResponsiveContainer width="100%" height="100%">
@@ -605,6 +684,33 @@ function splitOngoingTrend(trend, freq, key = 'count') {
   return { data: trend, ongoing: true, pct, projected, lastPeriod: last.period, actual }
 }
 
+// Reveals the projected-pin connector as a bottom-to-top vertical grow (clip-path, computed
+// from the rendered element's own bounding box) instead of a transform-based pop, since a CSS
+// `transform` here would fight recharts' own SVG positioning and make the pin appear to
+// slide in from the corner rather than grow in place.
+function growProjectedPin(wrapEl) {
+  if (!wrapEl) return
+  const line = wrapEl.querySelector('.projected-pin-line')
+  const dot = wrapEl.querySelector('.projected-pin-dot')
+  if (line) {
+    const { height } = line.getBBox()
+    line.style.transition = 'none'
+    line.style.clipPath = `inset(${height}px 0 0 0)`
+    requestAnimationFrame(() => {
+      line.style.transition = 'clip-path 0.35s ease-out'
+      line.style.clipPath = 'inset(0 0 0 0)'
+    })
+  }
+  if (dot) {
+    dot.style.transition = 'none'
+    dot.style.opacity = '0'
+    requestAnimationFrame(() => {
+      dot.style.transition = 'opacity 0.25s ease-out 0.3s'
+      dot.style.opacity = '1'
+    })
+  }
+}
+
 // Tooltip for a split trend chart: at the in-progress point (last x), shows both the
 // real figure so far and the projected full-period estimate alongside it.
 function ProjectionTip({ active, payload, label, freq, noun, projected, lastPeriod }) {
@@ -654,6 +760,17 @@ function AccountsSection({ data, loading, filters }) {
                    : 'New Accounts by Day'
   const trendNoun = trendFreq === 'year' ? 'year' : trendFreq === 'month' ? 'month' : 'day'
   const trendSplit = splitOngoingTrend(trend, trendFreq)
+  const [pinVisible, setPinVisible] = useState(false)
+  const trendChartWrapRef = useRef(null)
+  useEffect(() => {
+    setPinVisible(false)
+    if (!trendSplit.ongoing) return
+    const t = setTimeout(() => setPinVisible(true), AREA_ANIM_MS)
+    return () => clearTimeout(t)
+  }, [trendSplit.ongoing, trendSplit.lastPeriod, trendSplit.projected])
+  useEffect(() => {
+    if (pinVisible) growProjectedPin(trendChartWrapRef.current)
+  }, [pinVisible])
   const statusMap = Object.fromEntries((data.status_breakdown || []).map(s => [s.status, s.count]))
 
   const branchChartData = data.branch_breakdown.map(b => ({ name: b.branch, sb: b.sb, ca: b.ca }))
@@ -747,7 +864,7 @@ function AccountsSection({ data, loading, filters }) {
               )
             })}
           </div>
-          <div style={{ height: 220, position: 'relative' }}>
+          <div style={{ height: 220, position: 'relative' }} ref={trendChartWrapRef}>
             {trendLoading && <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', background:'rgba(255,255,255,.6)', zIndex:1 }}><Spinner /></div>}
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={trendSplit.data} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
@@ -768,13 +885,16 @@ function AccountsSection({ data, loading, filters }) {
                 <Tooltip content={<ProjectionTip freq={trendFreq} noun={trendNoun} projected={trendSplit.projected} lastPeriod={trendSplit.lastPeriod} />}
                          cursor={{ stroke: '#dce3ed', strokeWidth: 1.5 }} />
                 <Area type="monotone" dataKey="count" name="New Accounts" stroke="#1d4ed8" strokeWidth={2}
-                      fill="url(#areaGrad2)" dot={trendFreq === 'day' ? false : { fill: '#1d4ed8', r: 4, strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 5 }} />
-                {trendSplit.ongoing && (
+                      fill="url(#areaGrad2)" dot={trendFreq === 'day' ? false : { fill: '#1d4ed8', r: 4, strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 5 }}
+                      animationDuration={AREA_ANIM_MS} />
+                {trendSplit.ongoing && pinVisible && (
                   <>
                     <ReferenceLine segment={[{ x: trendSplit.lastPeriod, y: trendSplit.actual }, { x: trendSplit.lastPeriod, y: trendSplit.projected }]}
-                                   stroke="#d97706" strokeWidth={2} strokeDasharray="5 3" ifOverflow="extendDomain" />
+                                   stroke="#d97706" strokeWidth={2} strokeDasharray="5 3" ifOverflow="extendDomain"
+                                   className="projected-pin-line" />
                     <ReferenceDot x={trendSplit.lastPeriod} y={trendSplit.projected} r={5}
-                                  fill="#fff" stroke="#d97706" strokeWidth={2} ifOverflow="extendDomain" />
+                                  fill="#fff" stroke="#d97706" strokeWidth={2} ifOverflow="extendDomain"
+                                  className="projected-pin-dot" />
                   </>
                 )}
               </AreaChart>
@@ -828,6 +948,7 @@ function DepositsSection({ data, loading }) {
   const [typeFilter, setTypeFilter] = useState('all') // 'all' | 'FD' | 'RD' | 'SB' | 'CA'
   const [subtypeFilter, setSubtypeFilter] = useState('all') // code within typeFilter's nature, or 'all'
   if (loading || !data) return <Spinner />
+  const balancesReady = data.balances_ready !== false
   const types = data.deposit_types || []
   // Individual KPI cards stay scoped to FD/RD (as before) so Savings/Current
   // don't explode into one card per account sub-type; they're summarised below.
@@ -892,7 +1013,8 @@ function DepositsSection({ data, loading }) {
   return (
     <>
       <div className="kpi-bar">
-        <KpiCard icon={ICONS.fileText} label="Term Deposits (FD)"  value={fmtNum(data.td_count)}    sub={fmtCr(data.td_principal) + ' principal'} accent="blue"   />
+        <KpiCard icon={ICONS.fileText} label="Term Deposits (FD)"  value={fmtNum(data.td_count)}
+                 sub={balancesReady ? fmtCr(data.td_principal) + ' principal' : 'Syncing balances…'} accent="blue"   />
         {kpiTypes.map((t, i) => (
           <KpiCard key={t.code}
             icon={DEPOSIT_TYPE_ICONS[t.nature] || ICONS.clipboard}
@@ -975,7 +1097,7 @@ function DepositsSection({ data, loading }) {
           { key: 'branch', label: 'Branch' },
           ...(showFD ? [
             { key: 'td_count',     label: 'Term Deposits', numeric: true, render: r => fmtNum(r.td_count) },
-            { key: 'td_principal', label: 'FD Principal',  numeric: true, render: r => fmtCr(r.td_principal) },
+            { key: 'td_principal', label: 'FD Principal',  numeric: true, render: r => balancesReady ? fmtCr(r.td_principal) : '—' },
           ] : []),
           ...dynamicBranchCols,
           { key: 'total_accounts', label: 'Total (Count)',  numeric: true,
@@ -1043,8 +1165,9 @@ function AdvancesSection({ data, loading }) {
 
   if (loading || !data) return <Spinner />
 
+  const npaReady  = data.npa_ready !== false
   const npaRatio  = npaView === 'count' ? data.npa_ratio : data.npa_ratio_amount
-  const npaAccent = npaRatio <= 5 ? 'green' : npaRatio <= 10 ? 'amber' : 'red'
+  const npaAccent = !npaReady ? 'blue' : npaRatio <= 5 ? 'green' : npaRatio <= 10 ? 'amber' : 'red'
   const npaSubLabel = npaView === 'count' ? 'by account count' : 'by sanction amount'
   const branchChartData = data.branch_breakdown.map(b => ({ name: b.branch, standard: b.standard, npa: b.npa_count }))
 
@@ -1053,8 +1176,12 @@ function AdvancesSection({ data, loading }) {
       <div className="kpi-bar">
         <KpiCard icon={ICONS.clipboard} label="Total Loan Accounts"   value={fmtNum(data.total)}      sub="All types"                              accent="blue"   />
         <KpiCard icon={ICONS.checkCircle} label="Standard (Performing)" value={fmtNum(data.standard)}   sub={`of ${fmtNum(data.total)} accounts`}    accent="green"  />
-        <KpiCard icon={ICONS.alertTriangle} label="Gross NPA"             value={data.npa_ready === false ? '—' : fmtNum(data.npa_count)}
-                 sub={data.npa_ready === false ? 'Loading NPA data — refresh shortly' : fmtCr(data.npa_sanction) + ' outstanding'} accent="red"  />
+        <KpiCard icon={ICONS.alertTriangle} label="Gross NPA"             value={npaReady ? fmtNum(data.npa_count) : '—'}
+                 sub={npaReady ? fmtCr(data.npa_sanction) + ' outstanding' : 'Syncing NPA data…'} accent="red"  />
+        <KpiCard icon={ICONS.alertTriangle} label="NPA Ratio"
+                 value={fmtPct(data.npa_ratio_amount, npaReady)}
+                 sub={npaReady ? `by amount · ${data.npa_ratio}% by count` : 'Syncing NPA data…'}
+                 accent={npaAccent} />
         <KpiCard icon={ICONS.clock} label="Dormant (No Txn >90d)" value={fmtNum(data.dormant)}    sub="Loan accounts"                          accent={data.dormant > 0 ? 'amber' : 'green'} />
         <KpiCard icon={ICONS.barChart} label="Total Sanction"        value={fmtCr(data.total_sanction)} sub="Portfolio value"                     accent="purple" />
       </div>
@@ -1069,7 +1196,7 @@ function AdvancesSection({ data, loading }) {
 
       <div className="two-col-grid">
         <Panel title="Standard vs NPA by Branch"
-               badge={`NPA ${npaRatio}%`}
+               badge={`NPA ${fmtPct(npaRatio, npaReady)}`}
                badgeVariant={npaAccent}>
           <div style={{ height: 250 }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -1201,7 +1328,14 @@ function fyLabel(f_year, isCurrent) {
 // Groups the quarterly trend series (labelled "F_YEAR-Qn") into one bar per FY.
 // Only the most recent quarter can be incomplete (§_period_progress), so a group's
 // elapsed_pct is the completed quarters plus that one quarter's own progress, out of 4.
-function annualizeTrend(quarterly) {
+//
+// `ytdEquiv` (optional) is the P&L Summary's "Prior Period" figure — the same
+// Apr..today months of the FY just before the in-progress one. That FY's bar here
+// shows the FULL year, which is a different, larger number by design (see
+// PROFITABILITY_METRICS_METHODOLOGY.md §"Period" table) — we attach the YTD-equivalent
+// so the tooltip can surface the number that actually matches the summary table,
+// instead of leaving the "Prior Period" and this bar looking like they disagree.
+function annualizeTrend(quarterly, ytdEquiv) {
   const groups = {}
   for (const q of quarterly) {
     const fYear = Number(q.period.split('-Q')[0])
@@ -1221,6 +1355,9 @@ function annualizeTrend(quarterly) {
       net_profit: g.net_profit,
       complete: g.complete,
       elapsed_pct: g.complete ? null : Math.round(((g.quarterCount - 1) * 100 + g.runningElapsed) / 4),
+      ytd_equiv: ytdEquiv && g.f_year === ytdEquiv.f_year
+        ? { net_profit: ytdEquiv.net_profit, nii: ytdEquiv.nii }
+        : null,
     }))
 }
 
@@ -1241,7 +1378,18 @@ function ProfitabilitySection({ data, warmingUp, loading, fys, selectedFy, onFyC
   }
 
   const { pl, pl_prior, trend, balances, npa, ratios, warnings } = data
-  const displayTrend = trendView === 'annual' ? annualizeTrend(trend) : trend
+  // pl_prior is "same months last year" — only comparable to the FULL-year bar for
+  // that FY in Annual trend view when the current FY is still in progress (the FY
+  // right before it). Outside that case the full-year bar already covers exactly
+  // what pl_prior covers (a closed FY selection), so no annotation is needed.
+  const inProgressFYear = trend.length && trend[trend.length - 1].complete === false
+    ? Number(trend[trend.length - 1].period.split('-Q')[0]) : null
+  const ytdEquiv = data.period.type === 'ytd' && inProgressFYear != null
+    ? { f_year: inProgressFYear - 1, net_profit: pl_prior.net_profit, nii: pl_prior.nii }
+    : null
+  const displayTrend = trendView === 'annual' ? annualizeTrend(trend, ytdEquiv) : trend
+  const pl_prior_from = shiftYear(data.period.from, -1)
+  const pl_prior_to   = shiftYear(data.period.to, -1)
   const npaAccent = npa.gross_pct == null ? 'blue' : npa.gross_pct <= 5 ? 'green' : npa.gross_pct <= 10 ? 'amber' : 'red'
   const cdAccent  = ratios.cd_ratio_pct == null ? 'blue' : (ratios.cd_ratio_pct >= 60 && ratios.cd_ratio_pct <= 75) ? 'green' : 'amber'
   const npaAccounts = Object.values(npa.by_class).reduce((s, c) => s + (c.accounts || 0), 0)
@@ -1316,7 +1464,10 @@ function ProfitabilitySection({ data, warmingUp, loading, fys, selectedFy, onFyC
         <Panel title="P&L Summary"
                badge={data.period.type === 'ytd' ? 'YTD' : 'FY'}
                className="mt-panel">
-          <BranchTable rows={plRows} columns={[
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '0 14px 8px' }}>
+            Prior period: {fmtDate(pl_prior_from)} – {fmtDate(pl_prior_to)}
+          </div>
+          <BranchTable className="pl-table" rows={plRows} columns={[
             { key: 'label', label: 'Line' },
             { key: 'cur',   label: data.period.complete ? 'Current' : 'Current (running)', numeric: true, render: r => fmtCr(r.cur), style: r => r.strong ? { fontWeight: 700 } : {} },
             { key: 'prior', label: 'Prior Period', numeric: true, render: r => fmtCr(r.prior) },
@@ -1350,17 +1501,26 @@ function ProfitabilitySection({ data, warmingUp, loading, fys, selectedFy, onFyC
                       {d?.complete === false && (
                         <div className="tooltip-row"><span>{trendView === 'annual' ? 'Year' : 'Quarter'} elapsed</span><strong>{d?.elapsed_pct}%</strong></div>
                       )}
+                      {d?.ytd_equiv && (
+                        <>
+                          <div className="tooltip-row" style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid #e2e8f0' }}>
+                            <span>NII (same months as this yr)</span><strong>{fmtCr(d.ytd_equiv.nii)}</strong>
+                          </div>
+                          <div className="tooltip-row"><span>Net Profit (same months as this yr)</span><strong>{fmtCr(d.ytd_equiv.net_profit)}</strong></div>
+                          <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>= "Prior Period" in P&amp;L Summary</div>
+                        </>
+                      )}
                     </div>
                   )
                 }} cursor={{ fill: 'rgba(29,78,216,0.04)' }} />
                 <Legend wrapperStyle={{ fontSize: 11, color: '#64748b' }} />
-                <Bar dataKey="nii" name="NII" radius={[3, 3, 0, 0]}>
+                <Bar dataKey="nii" name="NII" fill="#1d4ed8" radius={[3, 3, 0, 0]}>
                   {displayTrend.map((t, i) => (
                     <Cell key={i} fill="#1d4ed8" fillOpacity={t.complete === false ? 0.4 : 1}
                           stroke={t.complete === false ? '#1d4ed8' : 'none'} strokeDasharray={t.complete === false ? '3 2' : ''} />
                   ))}
                 </Bar>
-                <Bar dataKey="net_profit" name="Net Profit" radius={[3, 3, 0, 0]}>
+                <Bar dataKey="net_profit" name="Net Profit" fill="#15803d" radius={[3, 3, 0, 0]}>
                   {displayTrend.map((t, i) => (
                     <Cell key={i} fill="#15803d" fillOpacity={t.complete === false ? 0.4 : 1}
                           stroke={t.complete === false ? '#15803d' : 'none'} strokeDasharray={t.complete === false ? '3 2' : ''} />
@@ -1405,44 +1565,15 @@ const SLR_STATUS_STYLE = {
   unknown:   { accent: 'blue',  badge: 'blue',  label: 'Calculating…' },
 }
 
-function SlrComplianceSection({ slr }) {
+function SlrCard({ slr }) {
   if (!slr) return null
-  const { slr_eligible_book_value, non_slr_book_value, ndtl, slr_pct,
-          minimum_pct, headroom_pct, status, balances_ready } = slr
+  const { slr_pct, minimum_pct, status, balances_ready } = slr
   const s = SLR_STATUS_STYLE[status] || SLR_STATUS_STYLE.unknown
-
   return (
-    <Panel title="SLR Compliance" className="mt-panel" badge={s.label} badgeVariant={s.badge}>
-      <div className="kpi-bar" style={{ paddingTop: 0 }}>
-        <KpiCard icon={ICONS.shield} label="SLR Ratio"
-                 value={slr_pct != null ? `${slr_pct}%` : '—'}
-                 sub={balances_ready ? 'SLR-eligible book ÷ NDTL' : 'Warming up…'}
-                 accent={s.accent} />
-        <KpiCard icon={ICONS.ruler} label="Minimum Required"
-                 value={`${minimum_pct}%`}
-                 sub="RBI norm for UCBs"
-                 accent="blue" />
-        <KpiCard icon={headroom_pct != null && headroom_pct < 0 ? '⛔' : '✅'} label="Headroom"
-                 value={headroom_pct != null ? `${headroom_pct > 0 ? '+' : ''}${headroom_pct}%` : '—'}
-                 sub="Above / below minimum"
-                 accent={s.accent} />
-        <KpiCard icon={ICONS.bank} label="SLR-Eligible Investments"
-                 value={fmtCr(slr_eligible_book_value)}
-                 sub="Govt securities & T-Bills"
-                 accent="purple" />
-        <KpiCard icon={ICONS.book} label="NDTL (Deposits Proxy)"
-                 value={ndtl != null ? fmtCr(ndtl) : '—'}
-                 sub="Bank-wide closing deposits"
-                 accent="cyan" />
-      </div>
-
-      {non_slr_book_value > 0 && (
-        <div className="table-footnote">
-          {fmtCr(non_slr_book_value)} held in non-SLR-eligible instruments (term deposits, others) —
-          not counted toward the SLR ratio above.
-        </div>
-      )}
-    </Panel>
+    <KpiCard icon={ICONS.shield} label="SLR Ratio"
+             value={slr_pct != null ? `${slr_pct}%` : '—'}
+             sub={balances_ready ? `Min ${minimum_pct}% — RBI norm for UCBs` : 'Warming up…'}
+             accent={s.accent} />
   )
 }
 
@@ -1483,9 +1614,8 @@ function InvestmentsSection({ data, loading }) {
                  value={`${weighted_avg_ytm}%`}
                  sub="Yield to maturity"
                  accent="orange" />
+        <SlrCard slr={slr} />
       </div>
-
-      <SlrComplianceSection slr={slr} />
 
       <Panel title="Investment Classification" className="mt-panel">
         <BranchTable rows={classification} columns={[
@@ -1569,14 +1699,15 @@ function InvestmentsSection({ data, loading }) {
 function AlertsSection({ data, loading }) {
   if (loading || !data) return <Spinner />
   const { alerts, summary } = data
+  const npaReady = summary.ready !== false
 
   return (
     <>
       <div className="kpi-bar">
         <KpiCard icon={ICONS.siren} label="Critical"      value={summary.critical}  sub="Require immediate action" accent={summary.critical > 0 ? 'red' : 'green'} />
         <KpiCard icon={ICONS.alertTriangle} label="Warnings"      value={summary.warning}   sub="Monitor closely"          accent={summary.warning > 0 ? 'amber' : 'green'} />
-        <KpiCard icon={ICONS.barChart} label="NPA (Count)"   value={`${summary.npa_pct_count}%`}  sub="By account count"  accent={summary.npa_pct_count > 5 ? 'red' : summary.npa_pct_count > 3 ? 'amber' : 'green'} />
-        <KpiCard icon={ICONS.money} label="NPA (Amount)"  value={`${summary.npa_pct_amount}%`} sub="By sanction amount" accent={summary.npa_pct_amount > 5 ? 'red' : summary.npa_pct_amount > 3 ? 'amber' : 'green'} />
+        <KpiCard icon={ICONS.barChart} label="NPA (Count)"   value={fmtPct(summary.npa_pct_count, npaReady)}  sub={npaReady ? 'By account count' : 'Syncing…'}  accent={!npaReady ? 'blue' : summary.npa_pct_count > 5 ? 'red' : summary.npa_pct_count > 3 ? 'amber' : 'green'} />
+        <KpiCard icon={ICONS.money} label="NPA (Amount)"  value={fmtPct(summary.npa_pct_amount, npaReady)} sub={npaReady ? 'By sanction amount' : 'Syncing…'} accent={!npaReady ? 'blue' : summary.npa_pct_amount > 5 ? 'red' : summary.npa_pct_amount > 3 ? 'amber' : 'green'} />
         {summary.cd_ratio != null && (
           <KpiCard icon={ICONS.trendingUp} label="CD Ratio" value={`${summary.cd_ratio}%`} sub="Closing balances, as of today"
             accent={summary.cd_ratio > 75 ? 'red' : summary.cd_ratio < 60 ? 'amber' : 'green'} />
@@ -1686,6 +1817,7 @@ function Dashboard({ user, onLogout, bankInfo }) {
   const [profFys, setProfFys] = useState([])
   const [profWarmingUp, setProfWarmingUp] = useState(false)
   const [investments, setInvestments] = useState(null)
+  const [jobsStatus, setJobsStatus] = useState(null)
 
   const [loading,   setLoading]   = useState(true)
   const [fetching,  setFetching]  = useState(false)
@@ -1790,6 +1922,25 @@ function Dashboard({ user, onLogout, bankInfo }) {
     return () => clearInterval(id)
   }, [fetchInvestments])
 
+  // Polls fast (5s) while any startup job is still loading — figures that
+  // depend on it read as "—" until then, see JobsStatusPill — then backs off
+  // to a slow heartbeat once everything's ready.
+  useEffect(() => {
+    let cancelled = false
+    let timer = null
+    async function poll() {
+      try {
+        const res = await fetch(`${API}/api/jobs/status`)
+        if (res.ok && !cancelled) setJobsStatus(await res.json())
+      } catch { /* best-effort */ }
+      if (!cancelled) {
+        timer = setTimeout(poll, jobsStatus?.ready ? 60_000 : 5_000)
+      }
+    }
+    poll()
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [jobsStatus?.ready])
+
   function handleApply(newFilters) {
     setFilters(newFilters)
     setLoading(true)
@@ -1821,12 +1972,13 @@ function Dashboard({ user, onLogout, bankInfo }) {
           updatedAt={updatedAt}
           user={user}
           onLogout={onLogout}
+          jobsStatus={jobsStatus}
         />
 
         <main className="page-content">
           {error && <div className="error-banner">{error}</div>}
 
-          {section === 'overview'  && <OverviewSection  accounts={accounts} kyc={kyc} loans={loans} alertsSummary={alertsData?.summary} loading={loading} />}
+          {section === 'overview'  && <OverviewSection  accounts={accounts} kyc={kyc} loans={loans} alertsSummary={alertsData?.summary} investments={investments} loading={loading} />}
           {section === 'accounts'  && <AccountsSection  data={accounts}   loading={loading} filters={filters} />}
           {section === 'deposits'  && <DepositsSection  data={deposits}   loading={loading} />}
           {section === 'advances'  && <AdvancesSection  data={advances}   loading={loading} />}

@@ -1,0 +1,74 @@
+INFO:     Will watch for changes in these directories: ['D:\\Ethereal\\ebank\\Dashboard\\backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [11948] using WatchFiles
+INFO:     Started server process [6224]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:62369 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62371 - "GET /api/branches HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62373 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60065 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53957 - "GET /api/branches HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53023 - "GET /api/metrics/profitability/fys HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:64164 - "GET /api/metrics/profitability?period=ytd HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:53636 - "GET /api/metrics/investments HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56949 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50903 - "GET /api/bank-info HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61144 - "GET /api/branches HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60575 - "GET /api/metrics/profitability/fys HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:59136 - "GET /api/metrics/profitability?period=ytd HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:53962 - "GET /api/alerts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54804 - "GET /api/metrics/investments HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59283 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51889 - "GET /api/bank-info HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51891 - "GET /api/alerts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58962 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60494 - "GET /api/branches HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60496 - "GET /api/alerts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50796 - "GET /api/metrics/profitability/fys HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:50798 - "GET /api/metrics/profitability?period=ytd HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:54758 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59665 - "GET /api/bank-info HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53138 - "GET /api/branches HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54756 - "GET /api/metrics/investments HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50233 - "GET /api/alerts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58192 - "GET /api/metrics/profitability/fys HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:58193 - "GET /api/metrics/profitability?period=ytd HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:51515 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51517 - "GET /api/bank-info HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58782 - "GET /api/metrics/investments HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60082 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53959 - "GET /api/metrics/advances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52107 - "GET /api/metrics/advances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50062 - "GET /api/metrics/advances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60903 - "GET /api/metrics/advances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65249 - "GET /api/metrics/advances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50915 - "GET /api/metrics/advances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61536 - "GET /api/metrics/advances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50072 - "GET /api/metrics/advances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53958 - "GET /api/metrics/accounts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55114 - "GET /api/metrics/accounts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60801 - "GET /api/metrics/accounts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52882 - "GET /api/metrics/accounts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53961 - "GET /api/metrics/deposits HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50947 - "GET /api/metrics/deposits HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50062 - "GET /api/metrics/deposits HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52834 - "GET /api/metrics/deposits HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53960 - "GET /api/metrics/kyc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58248 - "GET /api/metrics/kyc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62646 - "GET /api/metrics/kyc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51654 - "GET /api/metrics/kyc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57724 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54983 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63034 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52782 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59475 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51006 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59159 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51052 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60826 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59193 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62649 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50234 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50257 - "GET /api/jobs/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54106 - "GET /api/jobs/status HTTP/1.1" 200 OK

@@ -189,7 +189,7 @@ body {
 
 .kpi-bar {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 20px;
 }
@@ -205,6 +205,7 @@ body {
   position: relative;
   box-shadow: var(--shadow-sm);
   overflow: hidden;
+  min-width: 0;
   transition: box-shadow 0.2s;
 }
 
@@ -248,13 +249,15 @@ body {
 }
 
 .kpi-value {
-  font-size: 26px;
+  font-size: clamp(16px, 2vw, 26px);
   font-weight: 700;
   color: var(--kpi-accent, var(--blue));
   letter-spacing: -0.8px;
-  line-height: 1;
+  line-height: 1.15;
   margin-bottom: 5px;
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .kpi-sub {
@@ -266,7 +269,7 @@ body {
 
 .main-grid {
   display: grid;
-  grid-template-columns: 1fr 296px;
+  grid-template-columns: 1fr 340px;
   grid-template-rows: auto auto;
   gap: 14px;
 }
@@ -389,34 +392,37 @@ body {
 }
 
 .kyc-stats {
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
   margin-top: 6px;
 }
 
 .kyc-stat-box {
-  flex: 1;
+  min-width: 0;
   background: var(--bg-inset);
   border: 1px solid var(--border-sub);
   border-radius: 8px;
-  padding: 12px 14px;
+  padding: 10px 8px;
 }
 
 .kyc-stat-val {
-  font-size: 19px;
+  font-size: 17px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.5px;
   line-height: 1;
+  overflow-wrap: break-word;
 }
 
 .kyc-stat-lbl {
-  font-size: 10px;
+  font-size: 9.5px;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.8px;
+  letter-spacing: 0.3px;
   margin-top: 5px;
   font-weight: 600;
+  overflow-wrap: break-word;
 }
 
 /* ─── Loan Panel ──────────────────────────────────────── */
@@ -745,6 +751,20 @@ body {
 .data-table tbody td:first-child {
   font-weight: 600;
   color: var(--text);
+}
+
+/* P&L Summary: no horizontal scroll — wrap the line-item label instead of
+   forcing the table wider than the panel. */
+.pl-table.data-table-wrap {
+  overflow-x: visible;
+}
+.pl-table thead th,
+.pl-table tbody td {
+  white-space: normal;
+}
+.pl-table thead th:first-child,
+.pl-table tbody td:first-child {
+  width: 56%;
 }
 
 /* ─── Empty state ─────────────────────────────────────── */
@@ -1100,6 +1120,30 @@ body {
   font-weight: 700;
   color: var(--navy);
   letter-spacing: -0.2px;
+}
+
+.jobs-status-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  padding: 3px 10px 3px 8px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.jobs-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #1d4ed8;
+  flex-shrink: 0;
+  animation: pulse-dot 1.8s ease-in-out infinite;
 }
 
 .top-bar-right {

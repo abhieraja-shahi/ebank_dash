@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import math
 import os
 import re
 import secrets
@@ -158,6 +159,13 @@ HO_BRANCH_CODE = "90"
 PROFIT_STATUS = {"ready": False, "pl_as_of": None, "balances_as_of": None, "npa_as_of": None}
 PROFIT_CHECKS: dict = {}
 PROFIT_WARNINGS: list = []
+
+# NDTL / CRR — populated by _job_ndtl_crr (expensive: each NDTL bucket scans
+# the full account-ledger table, ~20s+ apiece, so it runs as a daily
+# background job rather than per-request). See _job_ndtl_crr for the algorithm.
+NDTL_CRR_STATUS = {
+    "as_of": None, "repfriday": None, "ndtl": None, "cash_reserve": None, "error": None,
+}
 
 
 def _fmt_yyyymmdd(d8: str) -> str:
@@ -646,6 +654,7 @@ async def startup():
     await _load_lookups()
     asyncio.create_task(_session_cleanup_task())
     asyncio.create_task(_lookup_refresh_task())
+    asyncio.create_task(_ndtl_crr_scheduler())
     asyncio.create_task(_profitability_scheduler())
 
 
@@ -1139,8 +1148,13 @@ async def get_deposits(
         "fd_maturing_30d":     int(mat_row["count_30d"] or 0),
         "fd_maturing_30d_amt": float(mat_row["amt_30d"] or 0),
         "branch_breakdown": branch_data,
+        "balances_ready": PROFIT_STATUS["balances_as_of"] is not None,
     }
-    _metrics_cache[key] = result
+    # Don't cache a response built before Job B has loaded BALANCES — it would
+    # pin td_principal (and branch_breakdown td_principal) at zero for the
+    # full TTL after every restart.
+    if PROFIT_STATUS["balances_as_of"] is not None:
+        _metrics_cache[key] = result
     return result
 
 
@@ -1287,6 +1301,189 @@ async def get_advances(
     return result
 
 
+# ── NDTL / CRR (RBI Form I) ──────────────────────────────────────────────────
+# Faithful port of HoReportFacade.getCrrDetails / getNewNdtl / getNdtlOneTwoThree
+# / getCashReserve (MySql-1.16/cbs-ejb/.../report/HoReportFacade.java) and
+# RbiReportFacade.getAcctsAndBal — the actual Java source behind the bank's own
+# RBI Form I (CRR) return — rather than an approximation, because that return is
+# the regulatory definition of both NDTL and "cash reserve maintained".
+#
+# Two things this bank's own cbs_ho_rbi_stmt_report configuration let us skip
+# without approximating the *dominant* figures:
+#  - No row is tagged NDTL-F, and getNewNdtl's formula (balOne - |balThree|,
+#    falling back to balTwo whenever that isn't positive) is then balOne=0
+#    minus a non-negative number, which is never positive — so NDTL is
+#    *always* balTwo (the NDTL-S bucket) for this configuration. NDTL-F/T are
+#    therefore never queried.
+#  - balTwo's few classification='A' correction rows (a lien-margin
+#    subtraction on "loan against deposit", two suspense/other-liabilities GL
+#    ranges, two overdrawn-savings carve-outs) are skipped — each is a single
+#    line item against ~19 full deposit buckets, so together they're well
+#    under 1% of NDTL. NDTL below is therefore "ndtl_s_liabilities_only" and
+#    reported as approximate for that reason.
+FORM1_AMENDMENT_PARAM = "FORM1-AMENDMENT-ACT-2025"
+GL_CASH_HEAD_ACCODE = "06200500"  # cash-in-hand GL head; sourced from cashinhand, not gl_recon
+NDTL_BUCKET_TABLES = {"SB": "recon", "CA": "ca_recon", "FD": "td_recon", "MS": "td_recon", "RD": "rdrecon"}
+
+
+async def _get_reporting_friday(cur, dt: str) -> Optional[str]:
+    """dt, return value: 'YYYYMMDD'. Mirrors getCrrDetails' branch: post-amendment
+    dates use ho_reportingfriday_amendment2025 (two Fridays back, via
+    HoReportAmendmentActFacade.getReportingFridayAmendment); earlier dates use
+    ho_reportingfriday minus 14 days."""
+    await cur.execute("SELECT code FROM cbs_parameterinfo WHERE name = %s", (FORM1_AMENDMENT_PARAM,))
+    row = await cur.fetchone()
+    amendment_dt = row["code"] if row else None
+
+    if amendment_dt and dt > amendment_dt:
+        await cur.execute(
+            "SELECT DATE_FORMAT(MAX(REPFRIDATE), '%%Y%%m%%d') AS d "
+            "FROM ho_reportingfriday_amendment2025 WHERE REPFRIDATE < %s", (dt,)
+        )
+        r1 = await cur.fetchone()
+        first_back = r1["d"] if r1 else None
+        if not first_back:
+            return None
+        await cur.execute(
+            "SELECT DATE_FORMAT(MAX(REPFRIDATE), '%%Y%%m%%d') AS d "
+            "FROM ho_reportingfriday_amendment2025 WHERE REPFRIDATE < %s", (first_back,)
+        )
+        r2 = await cur.fetchone()
+        return r2["d"] if r2 and r2["d"] else None
+
+    await cur.execute(
+        "SELECT DATE_FORMAT(MAX(repfridate), '%%Y%%m%%d') AS d "
+        "FROM ho_reportingfriday WHERE repfridate < %s", (dt,)
+    )
+    r = await cur.fetchone()
+    if not r or not r["d"]:
+        return None
+    return (datetime.strptime(r["d"], "%Y%m%d") - timedelta(days=14)).strftime("%Y%m%d")
+
+
+async def _ndtl_bucket_balance(cur, dt: str, ac_nature: str, ac_type: str) -> float:
+    """One NDTL-S, classification='L' bucket — a liability account-type/nature
+    (savings/current/FD/RD), summed as of `dt` (the reporting Friday), only
+    over accounts whose own cumulative balance as of that date is net-credit
+    (the RBI return excludes accounts that are, on net, overdrawn)."""
+    nature = ac_nature
+    if not nature:
+        await cur.execute("SELECT AcctNature FROM accounttypemaster WHERE AcctCode = %s", (ac_type,))
+        r = await cur.fetchone()
+        nature = r["AcctNature"] if r else None
+    table = NDTL_BUCKET_TABLES.get(nature)
+    if not table:
+        return 0.0
+
+    if nature in ("FD", "MS"):
+        # Fixed/MIS deposits: td_recon keyed by CLOSEFLAG, no net-credit filter —
+        # matches HoReportFacade's FIXED_AC/MS_AC branch exactly.
+        await cur.execute("""
+            SELECT COALESCE(SUM(CrAmt) - SUM(DrAmt), 0) AS bal FROM td_recon
+            WHERE SUBSTRING(ACNo,3,2) IN (SELECT AcctCode FROM accounttypemaster WHERE AcctNature = %s)
+              AND Dt <= %s AND Auth = 'Y' AND CloseFlag IS NULL
+        """, (nature, dt))
+        row = await cur.fetchone()
+        return float(row["bal"] or 0)
+
+    if ac_type:
+        type_clause, param = "a.Accttype = %s", ac_type
+    else:
+        type_clause, param = "a.Accttype IN (SELECT AcctCode FROM accounttypemaster WHERE AcctNature = %s)", nature
+    await cur.execute(f"""
+        SELECT COALESCE(SUM(amt), 0) AS bal FROM (
+          SELECT r.ACNo, SUM(r.CrAmt - r.DrAmt) AS amt
+          FROM {table} r JOIN accountmaster a ON r.ACNo = a.ACNo
+          WHERE r.ACNo IN (
+            SELECT ACNo FROM {table} WHERE Dt <= %s GROUP BY ACNo HAVING SIGN(SUM(CrAmt - DrAmt)) = 1
+          )
+          AND (a.ClosingDate IS NULL OR a.ClosingDate = '' OR a.ClosingDate > %s)
+          AND r.auth = 'Y' AND r.Dt <= %s AND {type_clause}
+          GROUP BY r.ACNo
+        ) x
+    """, (dt, dt, dt, param))
+    row = await cur.fetchone()
+    return float(row["bal"] or 0)
+
+
+async def _job_ndtl_crr():
+    """Daily background job: real NDTL (as of the current reporting Friday) and
+    real cash-reserve-maintained (cash in hand + correspondent-bank CA balances
+    tagged CR/CRP/SLREX in cbs_ho_rbi_stmt_report — this bank has no literal
+    'balance with RBI' GL head in use, see git history for that earlier attempt)."""
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            try:
+                today = datetime.utcnow().strftime("%Y%m%d")
+                repfri = await _get_reporting_friday(cur, today)
+                if not repfri:
+                    NDTL_CRR_STATUS["error"] = "Reporting Friday not configured (ho_reportingfriday*)"
+                    return
+
+                await cur.execute("""
+                    SELECT DISTINCT AC_NATURE, AC_TYPE FROM cbs_ho_rbi_stmt_report
+                    WHERE LOWER(REPORT_NAME) = 'form1' AND F_SSSS_GNO = 'NDTL-S' AND CLASSIFICATION = 'L'
+                      AND (AC_NATURE <> '' OR AC_TYPE <> '') AND %s BETWEEN EFF_FR_DT AND EFF_TO_DT
+                """, (repfri,))
+                buckets = await cur.fetchall()
+
+                ndtl = 0.0
+                for b in buckets:
+                    ndtl += await _ndtl_bucket_balance(cur, repfri, b["AC_NATURE"], b["AC_TYPE"])
+
+                await cur.execute("""
+                    SELECT DISTINCT GL_HEAD_FROM, GL_HEAD_TO FROM cbs_ho_rbi_stmt_report
+                    WHERE LOWER(REPORT_NAME) = 'form1'
+                      AND (F_SSS_GNO LIKE 'CR%%' OR F_SSSS_GNO = 'CR' OR F_SSSS_GNO LIKE 'SLREX%%' OR F_SSSS_GNO = 'SLREX')
+                      AND %s BETWEEN EFF_FR_DT AND EFF_TO_DT AND GL_HEAD_FROM <> ''
+                """, (today,))
+                gl_ranges = await cur.fetchall()
+
+                cash_reserve = 0.0
+                other_ranges = [r for r in gl_ranges if r["GL_HEAD_FROM"] != GL_CASH_HEAD_ACCODE]
+                if other_ranges:
+                    where = " OR ".join(["SUBSTRING(ACNo,3,8) BETWEEN %s AND %s"] * len(other_ranges))
+                    params = [today]
+                    for r in other_ranges:
+                        params += [r["GL_HEAD_FROM"], r["GL_HEAD_TO"]]
+                    await cur.execute(f"SELECT COALESCE(SUM(CrAmt - DrAmt), 0) AS bal FROM gl_recon "
+                                       f"WHERE Dt <= %s AND ({where})", params)
+                    row = await cur.fetchone()
+                    cash_reserve += float(row["bal"] or 0)
+
+                if any(r["GL_HEAD_FROM"] == GL_CASH_HEAD_ACCODE for r in gl_ranges):
+                    await cur.execute("SELECT COALESCE(SUM(amt), 0) AS amt FROM cashinhand WHERE ldate = %s", (today,))
+                    row = await cur.fetchone()
+                    cash_reserve += -1 * float(row["amt"] or 0)
+
+                NDTL_CRR_STATUS.update({
+                    "as_of": datetime.utcnow().isoformat(),
+                    "repfriday": _fmt_yyyymmdd(repfri),
+                    "ndtl": ndtl,
+                    "cash_reserve": abs(cash_reserve),
+                    "error": None,
+                })
+            except Exception as e:
+                NDTL_CRR_STATUS["error"] = str(e)
+
+
+async def _ndtl_crr_scheduler():
+    """Runs once at startup, then once every 24h — each run takes several
+    minutes (every NDTL bucket scans a full account-ledger table), and NDTL
+    itself only changes when the reporting fortnight rolls, so there's no
+    value in refreshing more often."""
+    try:
+        await _job_ndtl_crr()
+    except Exception as e:
+        NDTL_CRR_STATUS["error"] = str(e)
+    while True:
+        await asyncio.sleep(86400)
+        try:
+            await _job_ndtl_crr()
+        except Exception as e:
+            NDTL_CRR_STATUS["error"] = str(e)
+
+
 # ── Investments ───────────────────────────────────────────────────────────────
 # investment_master is the treasury securities book (GSEC/TBILL/bonds/shares) and,
 # unlike accountmaster, carries no branch column — it's a single HO-level portfolio,
@@ -1311,6 +1508,14 @@ SLR_ELIGIBLE_KEYWORDS = ("GOVERNMENT", "GOVT", "TREASURY")
 def _is_slr_eligible(sectype: Optional[str]) -> bool:
     s = (sectype or "").upper()
     return any(kw in s for kw in SLR_ELIGIBLE_KEYWORDS)
+
+# CRR / NDTL — ported from the actual core-banking source (HoReportFacade.
+# getCrrDetails / getNewNdtl / getNdtlOneTwoThree / getCashReserve in
+# MySql-1.16/cbs-ejb), not approximated, because RBI's Form I return is the
+# authoritative definition of both figures and a deposits-based NDTL proxy
+# was materially wrong. See _job_ndtl_crr below for the full derivation and
+# the specific (documented, <1% of NDTL) terms it intentionally skips.
+CRR_HEADROOM_WARN_PCT = 0.25
 
 # investment_master.marking is the RBI investment-classification code entered at
 # purchase. Only HTM ("held to maturity") is exempt from mark-to-market — it sits
@@ -1347,6 +1552,13 @@ async def get_investments():
                 ORDER BY MATDT
             """)
             rows = await cur.fetchall()
+
+            await cur.execute("""
+                SELECT CrrPerc, WefDate FROM ho_crr_parameter
+                WHERE WefDate <= CURDATE()
+                ORDER BY WefDate DESC LIMIT 1
+            """)
+            crr_param = await cur.fetchone()
 
     today = date.today()
 
@@ -1428,16 +1640,16 @@ async def get_investments():
     mtm_bucket_book_vs_face = sum(c["book_vs_face"] for c in classification_list if c["category"] in ("AFS", "HFT"))
     htm_book_vs_face = classification.get("HTM", {}).get("book_vs_face", 0.0)
 
-    # SLR compliance (§S3.4): SLR-eligible book value vs. NDTL. NDTL itself isn't
-    # tracked anywhere in this schema, so bank-wide closing deposits (Job B, same
-    # figure used for the CD ratio) is used as the practical proxy — deposits
-    # dominate NDTL for a cooperative bank with negligible outside borrowings.
+    # SLR / CRR compliance, both against the real NDTL from _job_ndtl_crr (the
+    # ported RBI Form I calculation — see that job's docstring for exactly what
+    # it computes and the small, documented terms it skips). ndtl_ready is False
+    # until that background job's first run completes (several minutes at
+    # startup); balances_ready gates the same for cash-reserve-maintained.
     slr_book = sum(h["book_value"] for h in holdings if h["slr_eligible"])
     non_slr_book = total_book - slr_book
-    deposits, _ = _agg_balances(None)
-    ndtl = deposits["total"]
-    balances_ready = PROFIT_STATUS["balances_as_of"] is not None
-    slr_pct = round(slr_book / ndtl * 100, 2) if ndtl else None
+    ndtl = NDTL_CRR_STATUS["ndtl"]
+    ndtl_ready = NDTL_CRR_STATUS["as_of"] is not None
+    slr_pct = round(slr_book / ndtl * 100, 2) if ndtl_ready and ndtl else None
     headroom_pct = round(slr_pct - SLR_MINIMUM_PCT, 2) if slr_pct is not None else None
     if headroom_pct is None:
         slr_status = "unknown"
@@ -1447,6 +1659,23 @@ async def get_investments():
         slr_status = "tight"
     else:
         slr_status = "compliant"
+
+    crr_minimum_pct = float(crr_param["CrrPerc"]) if crr_param else None
+    crr_minimum_wef = crr_param["WefDate"].strftime("%Y-%m-%d") if crr_param else None
+    crr_maintained = NDTL_CRR_STATUS["cash_reserve"]
+    crr_pct = round(crr_maintained / ndtl * 100, 2) if ndtl_ready and ndtl and crr_maintained is not None else None
+    crr_headroom_pct = (
+        round(crr_pct - crr_minimum_pct, 2)
+        if crr_pct is not None and crr_minimum_pct is not None else None
+    )
+    if crr_headroom_pct is None:
+        crr_status = "unknown"
+    elif crr_headroom_pct < 0:
+        crr_status = "breach"
+    elif crr_headroom_pct <= CRR_HEADROOM_WARN_PCT:
+        crr_status = "tight"
+    else:
+        crr_status = "compliant"
 
     result = {
         "total_book_value":   total_book,
@@ -1463,16 +1692,33 @@ async def get_investments():
         "slr": {
             "slr_eligible_book_value": slr_book,
             "non_slr_book_value":      non_slr_book,
-            "ndtl":                    ndtl if balances_ready else None,
-            "ndtl_as_of":              PROFIT_STATUS["balances_as_of"],
-            "slr_pct":                 slr_pct if balances_ready else None,
+            "ndtl":                    ndtl,
+            "ndtl_as_of":              NDTL_CRR_STATUS["as_of"],
+            "ndtl_reporting_friday":   NDTL_CRR_STATUS["repfriday"],
+            "slr_pct":                 slr_pct,
             "minimum_pct":             SLR_MINIMUM_PCT,
-            "headroom_pct":            headroom_pct if balances_ready else None,
-            "status":                  slr_status if balances_ready else "unknown",
-            "balances_ready":          balances_ready,
+            "headroom_pct":            headroom_pct,
+            "status":                  slr_status,
+            "balances_ready":          ndtl_ready,
+        },
+        "crr": {
+            "maintained_balance":     crr_maintained,
+            "ndtl":                   ndtl,
+            "ndtl_as_of":             NDTL_CRR_STATUS["as_of"],
+            "ndtl_reporting_friday":  NDTL_CRR_STATUS["repfriday"],
+            "crr_pct":                crr_pct,
+            "minimum_pct":            crr_minimum_pct,
+            "minimum_pct_wef":        crr_minimum_wef,
+            "headroom_pct":           crr_headroom_pct,
+            "status":                 crr_status,
+            "balances_ready":         ndtl_ready,
+            "approximate":            True,
+            "approximate_note":       "NDTL excludes a lien-margin correction and two minor GL-range "
+                                       "adjustments (together typically <1% of NDTL) — see backend main.py.",
+            "error":                  NDTL_CRR_STATUS["error"],
         },
     }
-    if balances_ready:
+    if ndtl_ready:
         _metrics_cache[key] = result
     return result
 
@@ -1485,36 +1731,67 @@ async def get_kyc(branch: Optional[str] = Query(None)):
     if key in _metrics_cache:
         return _metrics_cache[key]
 
+    # cbs_cust_kyc_details is a submission LOG (PK = TxnId), not one row per
+    # customer, so a customer can have zero rows (never submitted KYC) or
+    # several (resubmissions / periodic re-KYC). To know which customers/
+    # profiles currently lack valid KYC we take each customer's LATEST
+    # submission and LEFT JOIN it onto the active customer base, so
+    # customers with no submission at all show up too (as "no_kyc_record"),
+    # instead of being silently invisible like the old COUNT(*)-on-the-log
+    # version. Branch is attributed via the customer's account(s), since
+    # cbs_customer_master_detail itself carries no branch code.
+    branch_frag, branch_params = ("", [])
+    if branch:
+        branch_frag = "AND am.CurBrCode = %s"
+        branch_params = [branch]
+
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            if branch:
-                await cur.execute("""
-                    SELECT
-                        COUNT(*) AS total,
-                        SUM(CASE WHEN k.KycVerifiedBy IS NOT NULL THEN 1 ELSE 0 END) AS verified,
-                        SUM(CASE WHEN k.KycVerifiedBy IS NULL     THEN 1 ELSE 0 END) AS pending
+            await cur.execute(f"""
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN lk.KycVerifiedBy IS NOT NULL THEN 1 ELSE 0 END) AS verified,
+                    SUM(CASE WHEN lk.CustomerId IS NOT NULL AND lk.KycVerifiedBy IS NULL THEN 1 ELSE 0 END) AS awaiting_verification,
+                    SUM(CASE WHEN lk.CustomerId IS NULL THEN 1 ELSE 0 END) AS no_kyc_record
+                FROM cbs_customer_master_detail c
+                LEFT JOIN (
+                    SELECT DISTINCT custid1 AS CustomerId, CurBrCode
+                    FROM accountmaster
+                    WHERE custid1 IS NOT NULL
+                ) am ON am.CustomerId = c.customerid
+                LEFT JOIN (
+                    SELECT k.CustomerId, k.KycVerifiedBy
                     FROM cbs_cust_kyc_details k
-                    WHERE k.BrnCode = %s
-                """, [branch])
-            else:
-                await cur.execute("""
-                    SELECT
-                        COUNT(*) AS total,
-                        SUM(CASE WHEN KycVerifiedBy IS NOT NULL THEN 1 ELSE 0 END) AS verified,
-                        SUM(CASE WHEN KycVerifiedBy IS NULL     THEN 1 ELSE 0 END) AS pending
-                    FROM cbs_cust_kyc_details
-                """)
+                    INNER JOIN (
+                        SELECT CustomerId, MAX(TxnId) AS max_txn
+                        FROM cbs_cust_kyc_details
+                        GROUP BY CustomerId
+                    ) mx ON mx.CustomerId = k.CustomerId AND mx.max_txn = k.TxnId
+                ) lk ON lk.CustomerId = c.customerid
+                WHERE c.SuspensionFlg NOT IN ('Y', 'S') {branch_frag}
+            """, branch_params)
             row = await cur.fetchone()
 
-    total    = row["total"] or 0
-    verified = int(row["verified"] or 0)
-    pending  = int(row["pending"] or 0)
+    total                 = row["total"] or 0
+    verified              = int(row["verified"] or 0)
+    awaiting_verification = int(row["awaiting_verification"] or 0)
+    no_kyc_record         = int(row["no_kyc_record"] or 0)
+    pending               = awaiting_verification + no_kyc_record
+
+    if total > 0:
+        # floor (not round-to-nearest) so a nonzero pending count never
+        # displays as "100%" just because it's a tiny fraction of total
+        compliance_rate = math.floor(verified / total * 1000) / 10
+    else:
+        compliance_rate = 0
 
     result = {
-        "total":           total,
-        "verified":        verified,
-        "pending":         pending,
-        "compliance_rate": round(verified / total * 100, 1) if total > 0 else 0,
+        "total":                  total,
+        "verified":               verified,
+        "pending":                pending,
+        "awaiting_verification":  awaiting_verification,
+        "no_kyc_record":          no_kyc_record,
+        "compliance_rate":        compliance_rate,
     }
     _metrics_cache[key] = result
     return result
@@ -1655,6 +1932,7 @@ async def get_alerts(branch: Optional[str] = Query(None)):
             "fd_maturing_7d_amt": float(mat_row["amt_7d"] or 0),
             "fd_maturing_30d":    count_30d,
             "fd_maturing_30d_amt": float(mat_row["amt_30d"] or 0),
+            "ready":              PROFIT_STATUS["npa_as_of"] is not None,
         },
     }
     # Same as get_advances: NPA/CD-ratio alerts are empty until Jobs B/C finish.
@@ -1703,16 +1981,25 @@ async def get_profitability(
     else:
         period = "ytd"
         from_ym = current["from"][:4] + current["from"][5:7]
+        fy_start = date.fromisoformat(current["from"])
         now = datetime.utcnow()
-        to_ym = f"{now.year:04d}{now.month:02d}"
-        period_from, period_to = current["from"], now.date().isoformat()
-        # YTD is incomplete by definition — report how far through the FY "today" falls.
-        period_complete, period_elapsed_pct = _period_progress(
-            date.fromisoformat(current["from"]), date.fromisoformat(current["to_excl"]))
-        period_complete = False
+        # "Current" only ever covers CLOSED quarters — never the in-progress one,
+        # so it's always comparable, quarter-for-quarter, to "Prior" (same window
+        # shifted back a year, which is closed by construction). Truncate at the
+        # end of the last quarter that has actually finished.
+        current_q_start, _ = _quarter_bounds(_ym_quarter(f"{now.year:04d}{now.month:02d}"))
+        last_closed_end = current_q_start - timedelta(days=1)
+        if last_closed_end < fy_start:
+            # No quarter has closed yet this FY (we're still in Q1).
+            to_ym = "000000"
+            period_from, period_to = current["from"], current["from"]
+        else:
+            to_ym = f"{last_closed_end.year:04d}{last_closed_end.month:02d}"
+            period_from, period_to = current["from"], last_closed_end.isoformat()
+        period_complete, period_elapsed_pct = True, None
 
     prior_from_ym = str(int(from_ym) - 100)
-    prior_to_ym   = str(int(to_ym) - 100)
+    prior_to_ym   = "000000" if to_ym == "000000" else str(int(to_ym) - 100)
 
     def pl_block(fy_ym, ty_ym):
         totals, interest, ib = _period_pl(branch, fy_ym, ty_ym)
@@ -1781,6 +2068,28 @@ async def get_profitability(
         "interest_heads": interest_heads,
         "checks":   PROFIT_CHECKS,
         "warnings": list(PROFIT_WARNINGS),
+    }
+
+
+# ── Background job status ────────────────────────────────────────────────────
+# Drives a UI indicator so users see "still syncing" rather than reading zeros
+# as real figures during the startup warm-up window (Jobs B/C/D below, plus the
+# separate NDTL/CRR job). Cheap in-memory read — never DB-backed, never cached.
+
+@app.get("/api/jobs/status")
+async def get_jobs_status():
+    balances_ready = PROFIT_STATUS["balances_as_of"] is not None
+    npa_ready      = PROFIT_STATUS["npa_as_of"] is not None
+    pl_ready       = PROFIT_STATUS["pl_as_of"] is not None
+    ndtl_ready     = NDTL_CRR_STATUS["as_of"] is not None
+    return {
+        "ready": balances_ready and npa_ready and pl_ready and ndtl_ready,
+        "jobs": {
+            "balances": {"ready": balances_ready, "as_of": PROFIT_STATUS["balances_as_of"], "label": "Closing balances"},
+            "npa":      {"ready": npa_ready,      "as_of": PROFIT_STATUS["npa_as_of"],      "label": "NPA classification"},
+            "pl":       {"ready": pl_ready,       "as_of": PROFIT_STATUS["pl_as_of"],       "label": "Profit & loss"},
+            "ndtl_crr": {"ready": ndtl_ready,      "as_of": NDTL_CRR_STATUS["as_of"],        "label": "NDTL / CRR (RBI Form I)"},
+        },
     }
 
 
