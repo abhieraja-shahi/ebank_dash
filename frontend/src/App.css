@@ -714,6 +714,14 @@ body {
 .data-table thead th:first-child { border-radius: 6px 0 0 0; }
 .data-table thead th:last-child  { border-radius: 0 6px 0 0; }
 
+.data-table thead th.sortable-th {
+  cursor: pointer;
+  user-select: none;
+}
+.data-table thead th.sortable-th:hover {
+  color: var(--text-sub);
+}
+
 .data-table tbody td {
   padding: 10px 14px;
   color: var(--text-sub);
@@ -1622,6 +1630,67 @@ body {
 .alert-body {
   flex: 1;
   min-width: 0;
+}
+
+.table-footnote {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 8px 4px 0;
+}
+
+/* ─── SLR compliance gauge ────────────────────────────── */
+
+.slr-gauge-wrap {
+  padding: 4px 4px 0;
+}
+
+.slr-gauge-track {
+  position: relative;
+  height: 10px;
+  border-radius: 6px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.slr-gauge-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.3s ease;
+}
+
+.slr-gauge-green { background: var(--green); }
+.slr-gauge-amber { background: var(--amber); }
+.slr-gauge-red   { background: var(--red); }
+.slr-gauge-blue  { background: var(--blue); }
+
+.slr-gauge-min {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--navy);
+  z-index: 1;
+}
+
+.slr-gauge-labels {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  height: 14px;
+}
+
+.slr-gauge-min-label {
+  position: absolute;
+  transform: translateX(-50%);
+  color: var(--navy);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .alert-title {

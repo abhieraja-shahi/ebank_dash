@@ -63,8 +63,8 @@ const NAV_MAIN = [
   { id: 'advances', label: 'Loans & Advances',    icon: ICONS.advances,     active: true  },
   { id: 'deposits', label: 'Deposits',            icon: ICONS.deposits,     active: true  },
   { id: 'profitability', label: 'Profitability',  icon: ICONS.profitability, active: true },
+  { id: 'investments', label: 'Investments',      icon: ICONS.investments,  active: true  },
   { id: 'alerts',   label: 'Alerts',              icon: ICONS.alerts,       active: true  },
-  { id: null,       label: 'Investments',         icon: ICONS.investments,  active: false },
   { id: null,       label: 'Borrowings',          icon: ICONS.borrowings,   active: false },
   { id: null,       label: 'Letter of Credit',    icon: ICONS.lc,           active: false },
   { id: null,       label: 'General Ledger',      icon: ICONS.gl,           active: false },
@@ -168,6 +168,7 @@ const SECTION_TITLES = {
   advances: 'Loans & Advances',
   profitability: 'Profitability',
   alerts:   'Alerts & Exceptions',
+  investments: 'Investments',
 }
 
 function TopHeader({ section, filters, branches, fetching, onRefresh, updatedAt, user, onLogout }) {
@@ -295,19 +296,40 @@ function ChartTip({ active, payload, label, formatter = fmtNum }) {
   )
 }
 
-function BranchTable({ rows, columns }) {
+function BranchTable({ rows, columns, sortable = false }) {
+  const [sort, setSort] = useState(null) // { key, dir: 1 | -1 }
+
+  function toggleSort(key) {
+    if (!sortable) return
+    setSort(s => s?.key === key ? (s.dir === 1 ? { key, dir: -1 } : null) : { key, dir: 1 })
+  }
+
+  const sortedRows = sort
+    ? [...rows].sort((a, b) => {
+        const av = a[sort.key], bv = b[sort.key]
+        if (av == null) return bv == null ? 0 : 1
+        if (bv == null) return -1
+        if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * sort.dir
+        return String(av).localeCompare(String(bv)) * sort.dir
+      })
+    : rows
+
   return (
     <div className="data-table-wrap">
       <table className="data-table">
         <thead>
           <tr>
             {columns.map(c => (
-              <th key={c.key} style={c.numeric ? { textAlign: 'right' } : {}}>{c.label}</th>
+              <th key={c.key} style={c.numeric ? { textAlign: 'right' } : {}}
+                  className={sortable ? 'sortable-th' : ''}
+                  onClick={() => toggleSort(c.key)}>
+                {c.label}{sortable && sort?.key === c.key ? (sort.dir === 1 ? ' ▲' : ' ▼') : ''}
+              </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
+          {sortedRows.map((row, i) => (
             <tr key={i}>
               {columns.map(c => (
                 <td key={c.key} className={c.numeric ? 'num' : ''} style={c.style?.(row)}>
@@ -586,6 +608,7 @@ function AccountsSection({ data, loading, filters }) {
   const [trendFreq, setTrendFreq]   = useState('year')
   const [localTrend, setLocalTrend] = useState(null)
   const [trendLoading, setTrendLoading] = useState(false)
+  const [branchView, setBranchView] = useState('count')
 
   useEffect(() => {
     if (trendFreq !== 'year' && !filters?.fromDate && !filters?.toDate) {
@@ -743,13 +766,30 @@ function AccountsSection({ data, loading, filters }) {
           )}
         </Panel>
       </div>
-      <Panel title="Branch-wise Account Summary" className="mt-panel">
-        <BranchTable rows={data.branch_breakdown} columns={[
-          { key: 'branch', label: 'Branch' },
-          { key: 'sb',     label: 'Saving Bank', numeric: true, render: r => fmtNum(r.sb) },
-          { key: 'ca',     label: 'Current A/c', numeric: true, render: r => fmtNum(r.ca) },
-          { key: 'total',  label: 'SB + CA',     numeric: true, render: r => fmtNum(r.total), style: () => ({ fontWeight: 600 }) },
-        ]} />
+      <Panel title="Branch-wise Account Summary" className="mt-panel" collapsible defaultCollapsed>
+        <div className="panel-toolbar">
+          <span className="panel-toolbar-label">View:</span>
+          <Toggle
+            options={[{ value: 'count', label: 'By Count' }, { value: 'amount', label: 'By Amount' }]}
+            value={branchView}
+            onChange={setBranchView}
+          />
+        </div>
+        {branchView === 'count' ? (
+          <BranchTable rows={data.branch_breakdown} columns={[
+            { key: 'branch', label: 'Branch' },
+            { key: 'sb',     label: 'Saving Bank', numeric: true, render: r => fmtNum(r.sb) },
+            { key: 'ca',     label: 'Current A/c', numeric: true, render: r => fmtNum(r.ca) },
+            { key: 'total',  label: 'SB + CA',     numeric: true, render: r => fmtNum(r.total), style: () => ({ fontWeight: 600 }) },
+          ]} />
+        ) : (
+          <BranchTable rows={data.branch_breakdown} columns={[
+            { key: 'branch',    label: 'Branch' },
+            { key: 'sb_amt',    label: 'Saving Bank', numeric: true, render: r => fmtCr(r.sb_amt) },
+            { key: 'ca_amt',    label: 'Current A/c', numeric: true, render: r => fmtCr(r.ca_amt) },
+            { key: 'total_amt', label: 'SB + CA',     numeric: true, render: r => fmtCr(r.total_amt), style: () => ({ fontWeight: 600 }) },
+          ]} />
+        )}
       </Panel>
     </>
   )
@@ -892,7 +932,24 @@ function DepositsSection({ data, loading }) {
           </div>
         </Panel>
 
-      <Panel title="Branch-wise Deposit Summary" className="mt-panel" collapsible>
+      <Panel title="Branch-wise Deposit Summary" className="mt-panel" collapsible defaultCollapsed>
+        <div className="panel-toolbar">
+          <span className="panel-toolbar-group">
+            <span className="panel-toolbar-label">Type:</span>
+            <select className="panel-select" value={typeFilter}
+                    onChange={e => { setTypeFilter(e.target.value); setSubtypeFilter('all') }}>
+              {typeDropdownOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </span>
+          {subtypeOptions && (
+            <span className="panel-toolbar-group">
+              <span className="panel-toolbar-label" style={{ marginLeft: 8 }}>Subtype:</span>
+              <select className="panel-select" value={subtypeFilter} onChange={e => setSubtypeFilter(e.target.value)}>
+                {subtypeOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </span>
+          )}
+        </div>
         <BranchTable rows={data.branch_breakdown} columns={[
           { key: 'branch', label: 'Branch' },
           ...(showFD ? [
@@ -908,7 +965,7 @@ function DepositsSection({ data, loading }) {
       </Panel>
 
       <Panel title={`TD Maturity Ladder — ${data.maturity_window || 'Next 6 Months'}`}
-             className="mt-panel" collapsible>
+             className="mt-panel" collapsible defaultCollapsed>
         {(data.fd_maturing_7d > 0 || data.fd_maturing_30d > 0) && (
           <div className="maturity-strip">
             {data.fd_maturing_7d > 0 && (
@@ -1038,7 +1095,7 @@ function AdvancesSection({ data, loading }) {
         </Panel>
       </div>
 
-      <Panel title="Branch-wise Advances Summary" className="mt-panel" collapsible>
+      <Panel title="Branch-wise Advances Summary" className="mt-panel" collapsible defaultCollapsed>
         <div className="panel-toolbar">
           <span className="panel-toolbar-label">NPA ratio view:</span>
           <Toggle
@@ -1069,7 +1126,7 @@ function AdvancesSection({ data, loading }) {
         ]} />
       </Panel>
 
-      <Panel title="Loan Type Breakdown" className="mt-panel" collapsible>
+      <Panel title="Loan Type Breakdown" className="mt-panel" collapsible defaultCollapsed>
         <BranchTable rows={data.type_breakdown} columns={[
           { key: 'name',   label: 'Loan Type' },
           { key: 'count',  label: 'Accounts',       numeric: true, render: r => fmtNum(r.count) },
@@ -1273,6 +1330,178 @@ function ProfitabilitySection({ data, warmingUp, loading, period, onPeriodChange
   )
 }
 
+// ─── Section: Investments ─────────────────────────────────────────────────────
+// Bank-wide treasury securities book (investment_master) — no branch filter,
+// since that table carries no branch column (it's a single HO-level portfolio).
+
+const INVEST_COLORS = ['#1d4ed8', '#7c3aed', '#15803d', '#b45309', '#dc2626', '#0891b2', '#c2410c']
+
+const SLR_STATUS_STYLE = {
+  compliant: { accent: 'green', badge: 'green', label: 'Compliant' },
+  tight:     { accent: 'amber', badge: 'amber', label: 'Near Minimum' },
+  breach:    { accent: 'red',   badge: 'red',   label: 'Below Minimum' },
+  unknown:   { accent: 'blue',  badge: 'blue',  label: 'Calculating…' },
+}
+
+function SlrComplianceSection({ slr }) {
+  if (!slr) return null
+  const { slr_eligible_book_value, non_slr_book_value, ndtl, slr_pct,
+          minimum_pct, headroom_pct, status, balances_ready } = slr
+  const s = SLR_STATUS_STYLE[status] || SLR_STATUS_STYLE.unknown
+
+  return (
+    <Panel title="SLR Compliance" className="mt-panel" badge={s.label} badgeVariant={s.badge}>
+      <div className="kpi-bar" style={{ paddingTop: 0 }}>
+        <KpiCard icon="🛡️" label="SLR Ratio"
+                 value={slr_pct != null ? `${slr_pct}%` : '—'}
+                 sub={balances_ready ? 'SLR-eligible book ÷ NDTL' : 'Warming up…'}
+                 accent={s.accent} />
+        <KpiCard icon="📏" label="Minimum Required"
+                 value={`${minimum_pct}%`}
+                 sub="RBI norm for UCBs"
+                 accent="blue" />
+        <KpiCard icon={headroom_pct != null && headroom_pct < 0 ? '⛔' : '✅'} label="Headroom"
+                 value={headroom_pct != null ? `${headroom_pct > 0 ? '+' : ''}${headroom_pct}%` : '—'}
+                 sub="Above / below minimum"
+                 accent={s.accent} />
+        <KpiCard icon="🏦" label="SLR-Eligible Investments"
+                 value={fmtCr(slr_eligible_book_value)}
+                 sub="Govt securities & T-Bills"
+                 accent="purple" />
+        <KpiCard icon="📒" label="NDTL (Deposits Proxy)"
+                 value={ndtl != null ? fmtCr(ndtl) : '—'}
+                 sub="Bank-wide closing deposits"
+                 accent="cyan" />
+      </div>
+
+      {non_slr_book_value > 0 && (
+        <div className="table-footnote">
+          {fmtCr(non_slr_book_value)} held in non-SLR-eligible instruments (term deposits, others) —
+          not counted toward the SLR ratio above.
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+function InvestmentsSection({ data, loading }) {
+  if (loading && !data) return <Spinner />
+  if (!data) return <Spinner />
+
+  const { total_book_value, total_face_value, mtm_bucket_book_vs_face, htm_book_vs_face,
+          weighted_avg_roi, weighted_avg_ytm, holding_count, composition, classification,
+          maturity_ladder, holdings, slr } = data
+
+  const mtmAccent = mtm_bucket_book_vs_face > 0 ? 'green' : mtm_bucket_book_vs_face < 0 ? 'red' : 'blue'
+
+  return (
+    <>
+      <div className="kpi-bar">
+        <KpiCard icon="🏛️" label="Total Investment Book"
+                 value={fmtCr(total_book_value)}
+                 sub={`${fmtNum(holding_count)} holdings`}
+                 accent="blue" />
+        <KpiCard icon="📄" label="Face Value"
+                 value={fmtCr(total_face_value)}
+                 sub="Aggregate face value"
+                 accent="purple" />
+        <KpiCard icon={mtm_bucket_book_vs_face >= 0 ? '📈' : '📉'} label="AFS/HFT Book vs. Face"
+                 value={fmtCr(mtm_bucket_book_vs_face)}
+                 sub="Marked-to-market bucket only"
+                 accent={mtmAccent} />
+        <KpiCard icon="📦" label="HTM Book vs. Face"
+                 value={fmtCr(htm_book_vs_face)}
+                 sub="Amortized cost — not P&L"
+                 accent="blue" />
+        <KpiCard icon="💹" label="Weighted Avg ROI"
+                 value={`${weighted_avg_roi}%`}
+                 sub="Across live holdings"
+                 accent="cyan" />
+        <KpiCard icon="🎯" label="Weighted Avg YTM"
+                 value={`${weighted_avg_ytm}%`}
+                 sub="Yield to maturity"
+                 accent="orange" />
+      </div>
+
+      <SlrComplianceSection slr={slr} />
+
+      <Panel title="Investment Classification" className="mt-panel">
+        <BranchTable rows={classification} columns={[
+          { key: 'category',   label: 'Category' },
+          { key: 'count',      label: 'Holdings', numeric: true, render: r => fmtNum(r.count) },
+          { key: 'face_value', label: 'Face Value', numeric: true, render: r => fmtCr(r.face_value) },
+          { key: 'book_value', label: 'Book Value', numeric: true, render: r => fmtCr(r.book_value) },
+          { key: 'book_vs_face', label: 'Book vs. Face', numeric: true, render: r => fmtCr(r.book_vs_face) },
+        ]} />
+      </Panel>
+
+      <div className="two-col-grid">
+        <Panel title="Portfolio Composition" className="mt-panel">
+          <div style={{ height: 260 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={composition} cx="50%" cy="50%" innerRadius={56} outerRadius={90}
+                     paddingAngle={3} dataKey="book_value" nameKey="sectype">
+                  {composition.map((c, i) => <Cell key={c.sectype} fill={INVEST_COLORS[i % INVEST_COLORS.length]} />)}
+                </Pie>
+                <Tooltip formatter={(v, n) => [fmtCr(v), n]}
+                         contentStyle={{ background: '#fff', border: '1px solid #dce3ed', borderRadius: 8, fontSize: 12 }}
+                         itemStyle={{ color: '#334155' }} />
+                <Legend wrapperStyle={{ fontSize: 11, color: '#64748b' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+
+        <Panel title="Maturity Ladder" className="mt-panel">
+          <div style={{ height: 260 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={maturity_ladder} margin={{ top: 8, right: 16, left: -8, bottom: 0 }} barCategoryGap="30%">
+                <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" vertical={false} />
+                <XAxis dataKey="bucket" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false}
+                       tickFormatter={v => `${(v / 1e7).toFixed(1)}`} />
+                <Tooltip content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null
+                  const d = payload[0]?.payload
+                  return (
+                    <div className="chart-tooltip">
+                      <div className="tooltip-label">{label}</div>
+                      <div className="tooltip-row"><span>Holdings</span><strong>{fmtNum(d?.count)}</strong></div>
+                      <div className="tooltip-row"><span>Book Value</span><strong>{fmtCr(d?.amount)}</strong></div>
+                    </div>
+                  )
+                }} cursor={{ fill: 'rgba(29,78,216,0.04)' }} />
+                <Bar dataKey="amount" name="Book Value" fill={C.blue} radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Holdings" className="mt-panel" badge={`${fmtNum(holding_count)} Total`}
+             collapsible defaultCollapsed>
+        <BranchTable sortable rows={holdings} columns={[
+          { key: 'secdesc',    label: 'Security' },
+          { key: 'sectype',    label: 'Type' },
+          { key: 'category',   label: 'Category' },
+          { key: 'slr_eligible', label: 'SLR', render: r => r.slr_eligible ? 'Y' : 'N' },
+          { key: 'purchase_date', label: 'Purchase Date', render: r => fmtDate(r.purchase_date) },
+          { key: 'maturity',   label: 'Maturity', render: r => fmtDate(r.maturity) },
+          { key: 'roi',        label: 'ROI', numeric: true, render: r => `${r.roi}%` },
+          { key: 'ytm',        label: 'YTM', numeric: true,
+            render: r => r.ytm_estimated ? `${r.ytm}%*` : `${r.ytm}%` },
+          { key: 'face_value', label: 'Face Value', numeric: true, render: r => fmtCr(r.face_value) },
+          { key: 'book_value', label: 'Book Value', numeric: true, render: r => fmtCr(r.book_value) },
+        ]} />
+        {holdings.some(h => h.ytm_estimated) && (
+          <div className="table-footnote">* YTM not recorded for this security — approximated from ROI, book value and time to maturity.</div>
+        )}
+      </Panel>
+    </>
+  )
+}
+
 // ─── Section: Alerts ──────────────────────────────────────────────────────────
 
 function AlertsSection({ data, loading }) {
@@ -1393,6 +1622,7 @@ function Dashboard({ user, onLogout, bankInfo }) {
   const [profitability, setProfitability] = useState(null)
   const [profPeriod, setProfPeriod] = useState('ytd')
   const [profWarmingUp, setProfWarmingUp] = useState(false)
+  const [investments, setInvestments] = useState(null)
 
   const [loading,   setLoading]   = useState(true)
   const [fetching,  setFetching]  = useState(false)
@@ -1466,6 +1696,20 @@ function Dashboard({ user, onLogout, bankInfo }) {
     return () => clearInterval(id)
   }, [fetchProfitability])
 
+  const fetchInvestments = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/api/metrics/investments`)
+      if (!res.ok) return
+      setInvestments(await res.json())
+    } catch { /* investments is best-effort; other sections still work */ }
+  }, [])
+
+  useEffect(() => {
+    fetchInvestments()
+    const id = setInterval(fetchInvestments, 60_000)
+    return () => clearInterval(id)
+  }, [fetchInvestments])
+
   function handleApply(newFilters) {
     setFilters(newFilters)
     setLoading(true)
@@ -1493,7 +1737,7 @@ function Dashboard({ user, onLogout, bankInfo }) {
           filters={filters}
           branches={branches}
           fetching={fetching}
-          onRefresh={() => { fetchAll(filters); fetchProfitability() }}
+          onRefresh={() => { fetchAll(filters); fetchProfitability(); fetchInvestments() }}
           updatedAt={updatedAt}
           user={user}
           onLogout={onLogout}
@@ -1516,6 +1760,7 @@ function Dashboard({ user, onLogout, bankInfo }) {
             />
           )}
           {section === 'alerts'    && <AlertsSection    data={alertsData} loading={loading} />}
+          {section === 'investments' && <InvestmentsSection data={investments} loading={loading} />}
         </main>
       </div>
     </div>

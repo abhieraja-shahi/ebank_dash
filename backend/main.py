@@ -900,6 +900,10 @@ async def get_accounts(
     branch_data = sorted(branch_sb_ca.values(), key=lambda x: x["branch_code"])
     for b in branch_data:
         b["total"] = b["sb"] + b["ca"]
+        bal = BALANCES.get(b["branch_code"], {})
+        b["sb_amt"] = bal.get("sb", 0.0)
+        b["ca_amt"] = bal.get("ca_credit", 0.0)
+        b["total_amt"] = b["sb_amt"] + b["ca_amt"]
 
     status_breakdown = [
         {"status": r["AccStatus"], "label": ACC_STATUS_LABELS.get(r["AccStatus"], f"Status {r['AccStatus']}"), "count": r["count"]}
@@ -1269,6 +1273,196 @@ async def get_advances(
     # Don't cache a response built before Job C has loaded NPA — it would pin
     # NPA at zero for the full TTL after every restart.
     if result["npa_ready"]:
+        _metrics_cache[key] = result
+    return result
+
+
+# ── Investments ───────────────────────────────────────────────────────────────
+# investment_master is the treasury securities book (GSEC/TBILL/bonds/shares) and,
+# unlike accountmaster, carries no branch column — it's a single HO-level portfolio,
+# so this endpoint has no branch filter. CLOSEDT IS NULL = still held; AUTH='Y' =
+# authorized (maker-checker pending entries are out of scope here).
+
+MATURITY_BUCKETS = [
+    ("0-30 Days",   0,   30),
+    ("31-90 Days",  31,  90),
+    ("91-365 Days", 91,  365),
+    ("Beyond 1 Year", 366, None),
+]
+
+# RBI has phased UCBs' minimum SLR down to parity with scheduled commercial
+# banks (18%, current norm as of FY2025-26). SECTYPE is free text entered at
+# the branch; only central/state government securities and treasury bills
+# are SLR-eligible — term deposits with other banks and "OTHERS" are not.
+SLR_MINIMUM_PCT = 18.0
+SLR_HEADROOM_WARN_PCT = 0.5
+SLR_ELIGIBLE_KEYWORDS = ("GOVERNMENT", "GOVT", "TREASURY")
+
+def _is_slr_eligible(sectype: Optional[str]) -> bool:
+    s = (sectype or "").upper()
+    return any(kw in s for kw in SLR_ELIGIBLE_KEYWORDS)
+
+# investment_master.marking is the RBI investment-classification code entered at
+# purchase. Only HTM ("held to maturity") is exempt from mark-to-market — it sits
+# at amortized cost and any premium/discount over face is amortized to P&L over
+# the residual tenor, not recognized as a point-in-time gain/loss. AFS and HFT are
+# both marked to market. "HT" is a data-entry variant of "HM" seen across several
+# bank instances (same intent, inconsistent entry); blank/unrecognized codes mean
+# the classification was never entered for that holding.
+INVESTMENT_CATEGORY_MAP = {"HM": "HTM", "HT": "HTM", "AF": "AFS", "HF": "HFT"}
+
+def _classify_marking(marking: Optional[str]) -> str:
+    code = (marking or "").strip().upper()
+    return INVESTMENT_CATEGORY_MAP.get(code, "Unclassified")
+
+def _approx_ytm(face: float, price: float, roi_pct: float, years: float) -> float:
+    """Bond-equivalent approximate YTM, used only when investment_master.ytm is unset (0)."""
+    if years <= 0 or (face + price) == 0:
+        return 0.0
+    coupon = (roi_pct / 100.0) * face
+    return round(((coupon + (face - price) / years) / ((face + price) / 2)) * 100, 2)
+
+@app.get("/api/metrics/investments")
+async def get_investments():
+    key = ("investments",)
+    if key in _metrics_cache:
+        return _metrics_cache[key]
+
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                SELECT SECTYPE, SECDESC, ROI, ytm, TRANSDT, MATDT, FACEVALUE, BOOKVALUE, marking
+                FROM investment_master
+                WHERE CLOSEDT IS NULL AND AUTH = 'Y'
+                ORDER BY MATDT
+            """)
+            rows = await cur.fetchall()
+
+    today = date.today()
+
+    for r in rows:
+        raw_ytm = float(r["ytm"] or 0)
+        if raw_ytm:
+            r["_ytm"] = raw_ytm
+            r["_ytm_estimated"] = False
+        else:
+            years = (r["MATDT"].date() - today).days / 365.0 if r["MATDT"] else 0
+            r["_ytm"] = _approx_ytm(float(r["FACEVALUE"] or 0), float(r["BOOKVALUE"] or 0),
+                                     float(r["ROI"] or 0), years)
+            r["_ytm_estimated"] = True
+
+    total_book = sum(float(r["BOOKVALUE"] or 0) for r in rows)
+    total_face = sum(float(r["FACEVALUE"] or 0) for r in rows)
+
+    weighted_roi = sum(float(r["ROI"] or 0) * float(r["BOOKVALUE"] or 0) for r in rows)
+    weighted_ytm = sum(r["_ytm"] * float(r["BOOKVALUE"] or 0) for r in rows)
+
+    composition: dict = {}
+    for r in rows:
+        sec = r["SECTYPE"]
+        c = composition.setdefault(sec, {"sectype": sec, "count": 0, "book_value": 0.0})
+        c["count"] += 1
+        c["book_value"] += float(r["BOOKVALUE"] or 0)
+
+    ladder = []
+    for label, lo, hi in MATURITY_BUCKETS:
+        count, amount = 0, 0.0
+        for r in rows:
+            if not r["MATDT"]:
+                continue
+            days = (r["MATDT"].date() - today).days
+            if days < lo:
+                continue
+            if hi is not None and days > hi:
+                continue
+            count += 1
+            amount += float(r["BOOKVALUE"] or 0)
+        ladder.append({"bucket": label, "count": count, "amount": amount})
+
+    holdings = [
+        {
+            "sectype":     r["SECTYPE"],
+            "secdesc":     r["SECDESC"],
+            "roi":         float(r["ROI"] or 0),
+            "ytm":         r["_ytm"],
+            "ytm_estimated": r["_ytm_estimated"],
+            "purchase_date": r["TRANSDT"].strftime("%Y-%m-%d") if r["TRANSDT"] else None,
+            "maturity":    r["MATDT"].strftime("%Y-%m-%d") if r["MATDT"] else None,
+            "face_value":  float(r["FACEVALUE"] or 0),
+            "book_value":  float(r["BOOKVALUE"] or 0),
+            "slr_eligible": _is_slr_eligible(r["SECTYPE"]),
+            "category":    _classify_marking(r["marking"]),
+        }
+        for r in rows
+    ]
+
+    # Classification breakdown (HTM/AFS/HFT). "book_vs_face" is acquisition
+    # premium/discount, not a live mark-to-market — this schema has no market
+    # price feed (investment_master.CLOSEPRICEGSEC is never populated), so it's
+    # the only P&L-relevant figure available. For HTM it isn't P&L-relevant at
+    # all: it amortizes to interest income over the residual tenor rather than
+    # showing up as a gain/loss, so the UI must not present it as MTM.
+    classification: dict = {}
+    for h in holdings:
+        c = classification.setdefault(h["category"], {
+            "category": h["category"], "count": 0, "face_value": 0.0, "book_value": 0.0,
+        })
+        c["count"] += 1
+        c["face_value"] += h["face_value"]
+        c["book_value"] += h["book_value"]
+    for c in classification.values():
+        c["book_vs_face"] = c["book_value"] - c["face_value"]
+    category_order = {"AFS": 0, "HFT": 1, "HTM": 2, "Unclassified": 3}
+    classification_list = sorted(classification.values(), key=lambda c: category_order.get(c["category"], 9))
+
+    mtm_bucket_book_vs_face = sum(c["book_vs_face"] for c in classification_list if c["category"] in ("AFS", "HFT"))
+    htm_book_vs_face = classification.get("HTM", {}).get("book_vs_face", 0.0)
+
+    # SLR compliance (§S3.4): SLR-eligible book value vs. NDTL. NDTL itself isn't
+    # tracked anywhere in this schema, so bank-wide closing deposits (Job B, same
+    # figure used for the CD ratio) is used as the practical proxy — deposits
+    # dominate NDTL for a cooperative bank with negligible outside borrowings.
+    slr_book = sum(h["book_value"] for h in holdings if h["slr_eligible"])
+    non_slr_book = total_book - slr_book
+    deposits, _ = _agg_balances(None)
+    ndtl = deposits["total"]
+    balances_ready = PROFIT_STATUS["balances_as_of"] is not None
+    slr_pct = round(slr_book / ndtl * 100, 2) if ndtl else None
+    headroom_pct = round(slr_pct - SLR_MINIMUM_PCT, 2) if slr_pct is not None else None
+    if headroom_pct is None:
+        slr_status = "unknown"
+    elif headroom_pct < 0:
+        slr_status = "breach"
+    elif headroom_pct <= SLR_HEADROOM_WARN_PCT:
+        slr_status = "tight"
+    else:
+        slr_status = "compliant"
+
+    result = {
+        "total_book_value":   total_book,
+        "total_face_value":   total_face,
+        "mtm_bucket_book_vs_face": mtm_bucket_book_vs_face,
+        "htm_book_vs_face":   htm_book_vs_face,
+        "weighted_avg_roi":   round(weighted_roi / total_book, 2) if total_book else 0,
+        "weighted_avg_ytm":   round(weighted_ytm / total_book, 2) if total_book else 0,
+        "holding_count":      len(rows),
+        "composition":        sorted(composition.values(), key=lambda x: -x["book_value"]),
+        "classification":     classification_list,
+        "maturity_ladder":    ladder,
+        "holdings":           holdings,
+        "slr": {
+            "slr_eligible_book_value": slr_book,
+            "non_slr_book_value":      non_slr_book,
+            "ndtl":                    ndtl if balances_ready else None,
+            "ndtl_as_of":              PROFIT_STATUS["balances_as_of"],
+            "slr_pct":                 slr_pct if balances_ready else None,
+            "minimum_pct":             SLR_MINIMUM_PCT,
+            "headroom_pct":            headroom_pct if balances_ready else None,
+            "status":                  slr_status if balances_ready else "unknown",
+            "balances_ready":          balances_ready,
+        },
+    }
+    if balances_ready:
         _metrics_cache[key] = result
     return result
 
