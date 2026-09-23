@@ -140,7 +140,8 @@ PL_CLASS: dict    = {}   # gl_code -> {side, interest, inter_branch}
 PL_MONTH: dict    = {}   # branch -> gl_code -> "YYYYMM" -> net_credit (CrAmt - DrAmt)
 PL_BRANCHES: list = []
 
-FY_INFO: dict = {"current": None, "prior": None}  # {"from": "YYYY-MM-DD", "to_excl": "YYYY-MM-DD", "f_year": int}
+FY_INFO: dict = {"current": None, "prior": None, "list": []}  # {"from": "YYYY-MM-DD", "to_excl": "YYYY-MM-DD", "f_year": int}
+PROFIT_HISTORY_YEARS = 3  # how many FYs (incl. current) get their P&L loaded for multi-year tracking
 
 BALANCES: dict = {}   # branch -> {sb, rd, tl, dl, fd, ca_credit, ca_debit, deposits, advances}
 NPA: dict      = {}   # branch -> {11: {accounts, amount}, 12: {...}, 13: {...}}
@@ -223,18 +224,21 @@ async def _load_fy_info():
             rows = await cur.fetchall()
     if not rows:
         raise RuntimeError("cbs_yearend is empty")
+    def _fy_window(row):
+        return {
+            "from": _fmt_yyyymmdd(row["MINDATE"]),
+            "to_excl": (date.fromisoformat(_fmt_yyyymmdd(row["MAXDATE"])) + timedelta(days=1)).isoformat(),
+            "f_year": row["F_YEAR"],
+        }
+
     current = next((r for r in rows if r["YEARENDFLAG"] == "N"), rows[0])
     prior = next((r for r in rows if r["F_YEAR"] == current["F_YEAR"] - 1), None)
-    FY_INFO["current"] = {
-        "from": _fmt_yyyymmdd(current["MINDATE"]),
-        "to_excl": (date.fromisoformat(_fmt_yyyymmdd(current["MAXDATE"])) + timedelta(days=1)).isoformat(),
-        "f_year": current["F_YEAR"],
-    }
-    FY_INFO["prior"] = None if not prior else {
-        "from": _fmt_yyyymmdd(prior["MINDATE"]),
-        "to_excl": (date.fromisoformat(_fmt_yyyymmdd(prior["MAXDATE"])) + timedelta(days=1)).isoformat(),
-        "f_year": prior["F_YEAR"],
-    }
+    FY_INFO["current"] = _fy_window(current)
+    FY_INFO["prior"] = None if not prior else _fy_window(prior)
+    # Most recent PROFIT_HISTORY_YEARS FYs (current first), for multi-year tracking.
+    history_rows = [r for r in rows if r["F_YEAR"] <= current["F_YEAR"]]
+    history_rows.sort(key=lambda r: r["F_YEAR"], reverse=True)
+    FY_INFO["list"] = [_fy_window(r) for r in history_rows[:PROFIT_HISTORY_YEARS]]
 
 
 async def _load_pl_branches():
@@ -590,28 +594,34 @@ async def _job_checks():
             PROFIT_WARNINGS.append(w)
 
 
-async def _profitability_refresh(both_fys: bool):
+async def _profitability_refresh(both_fys: bool, full_history: bool = False):
     # Balances and NPA are cheap and feed /advances and /alerts, so load them before
     # the slow P&L scans — otherwise those endpoints show zero NPA through warm-up.
     await _job_balances()
     await _job_npa()
     await _load_fy_info()
-    if both_fys and FY_INFO["prior"]:
-        await _job_pl(FY_INFO["prior"])
-    if FY_INFO["current"]:
-        await _job_pl(FY_INFO["current"])
+    if full_history:
+        # One-time (startup) load of PROFIT_HISTORY_YEARS FYs so banks can track
+        # profit trends across years/quarters, not just the current+prior window.
+        for fy in FY_INFO["list"]:
+            await _job_pl(fy)
+    else:
+        if both_fys and FY_INFO["prior"]:
+            await _job_pl(FY_INFO["prior"])
+        if FY_INFO["current"]:
+            await _job_pl(FY_INFO["current"])
     await _job_checks()
 
 
 async def _profitability_scheduler():
-    """Startup: load previous + current FY, balances, NPA, checks. Then hourly:
+    """Startup: load last PROFIT_HISTORY_YEARS FYs, balances, NPA, checks. Then hourly:
     current FY + balances + NPA. Daily: also previous FY + checks (§2)."""
     global profit_pool
     profit_db_config = {**DB_CONFIG, "minsize": 1, "maxsize": 1}
     profit_pool = await aiomysql.create_pool(**profit_db_config)
 
     try:
-        await _profitability_refresh(both_fys=True)
+        await _profitability_refresh(both_fys=True, full_history=True)
         PROFIT_STATUS["ready"] = True
     except Exception as e:
         PROFIT_WARNINGS.append(f"profitability startup load failed: {e}")
@@ -1655,6 +1665,19 @@ async def get_alerts(branch: Optional[str] = Query(None)):
 
 # ── Profitability ─────────────────────────────────────────────────────────────
 
+@app.get("/api/metrics/profitability/fys")
+async def get_profitability_fys():
+    """FYs with P&L loaded in memory, most recent first — drives the FY picker."""
+    if not PROFIT_STATUS["ready"] or not FY_INFO.get("current"):
+        raise HTTPException(status_code=503, detail={"warming_up": True})
+    current_f_year = FY_INFO["current"]["f_year"]
+    return [
+        {"f_year": w["f_year"], "from": w["from"], "to": _fy_last_day(w),
+         "is_current": w["f_year"] == current_f_year}
+        for w in FY_INFO["list"]
+    ]
+
+
 @app.get("/api/metrics/profitability")
 async def get_profitability(
     branch: Optional[str] = Query(None),
@@ -1669,12 +1692,9 @@ async def get_profitability(
 
     if period == "fy":
         target = fy or current["f_year"]
-        if current["f_year"] == target:
-            window = current
-        elif prior and prior["f_year"] == target:
-            window = prior
-        else:
-            loaded = [w["f_year"] for w in (prior, current) if w]
+        window = next((w for w in FY_INFO["list"] if w["f_year"] == target), None)
+        if not window:
+            loaded = [w["f_year"] for w in FY_INFO["list"]]
             raise HTTPException(status_code=400, detail=f"FY {target} is not loaded (have {loaded})")
         from_ym, to_ym = _fy_ym_bounds(window)
         period_from, period_to = window["from"], _fy_last_day(window)

@@ -1173,7 +1173,38 @@ function PeriodBadge({ complete, elapsedPct, size = 'md' }) {
   )
 }
 
-function ProfitabilitySection({ data, warmingUp, loading, period, onPeriodChange }) {
+function fyLabel(f_year, isCurrent) {
+  return `FY ${f_year}-${String((f_year + 1) % 100).padStart(2, '0')}${isCurrent ? ' (YTD)' : ''}`
+}
+
+// Groups the quarterly trend series (labelled "F_YEAR-Qn") into one bar per FY.
+// Only the most recent quarter can be incomplete (§_period_progress), so a group's
+// elapsed_pct is the completed quarters plus that one quarter's own progress, out of 4.
+function annualizeTrend(quarterly) {
+  const groups = {}
+  for (const q of quarterly) {
+    const fYear = Number(q.period.split('-Q')[0])
+    const g = groups[fYear] || (groups[fYear] = {
+      f_year: fYear, nii: 0, net_profit: 0, complete: true, quarterCount: 0, runningElapsed: 0,
+    })
+    g.nii += q.nii
+    g.net_profit += q.net_profit
+    g.quarterCount += 1
+    if (q.complete === false) { g.complete = false; g.runningElapsed = q.elapsed_pct || 0 }
+  }
+  return Object.values(groups)
+    .sort((a, b) => a.f_year - b.f_year)
+    .map(g => ({
+      period: fyLabel(g.f_year, false),
+      nii: g.nii,
+      net_profit: g.net_profit,
+      complete: g.complete,
+      elapsed_pct: g.complete ? null : Math.round(((g.quarterCount - 1) * 100 + g.runningElapsed) / 4),
+    }))
+}
+
+function ProfitabilitySection({ data, warmingUp, loading, fys, selectedFy, onFyChange }) {
+  const [trendView, setTrendView] = useState('quarterly')
   if (loading && !data) return <Spinner />
 
   if (warmingUp || !data) {
@@ -1189,6 +1220,7 @@ function ProfitabilitySection({ data, warmingUp, loading, period, onPeriodChange
   }
 
   const { pl, pl_prior, trend, balances, npa, ratios, warnings } = data
+  const displayTrend = trendView === 'annual' ? annualizeTrend(trend) : trend
   const npaAccent = npa.gross_pct == null ? 'blue' : npa.gross_pct <= 5 ? 'green' : npa.gross_pct <= 10 ? 'amber' : 'red'
   const cdAccent  = ratios.cd_ratio_pct == null ? 'blue' : (ratios.cd_ratio_pct >= 60 && ratios.cd_ratio_pct <= 75) ? 'green' : 'amber'
   const npaAccounts = Object.values(npa.by_class).reduce((s, c) => s + (c.accounts || 0), 0)
@@ -1213,12 +1245,14 @@ function ProfitabilitySection({ data, warmingUp, loading, period, onPeriodChange
       )}
 
       <div className="panel-toolbar" style={{ marginBottom: 12, flexWrap: 'wrap', rowGap: 8 }}>
-        <span className="panel-toolbar-label">Period:</span>
-        <Toggle
-          options={[{ value: 'ytd', label: 'Year to Date' }, { value: 'fy', label: `FY ${data.period.from?.slice(0,4)}` }]}
-          value={period}
-          onChange={onPeriodChange}
-        />
+        <span className="panel-toolbar-label">Financial Year:</span>
+        <select className="panel-select" value={selectedFy} onChange={e => onFyChange(e.target.value)}>
+          {fys.map(w => (
+            <option key={w.f_year} value={w.is_current ? 'ytd' : w.f_year}>
+              {fyLabel(w.f_year, w.is_current)}
+            </option>
+          ))}
+        </select>
         <PeriodBadge complete={data.period.complete} elapsedPct={data.period.elapsed_pct} />
         <span style={{ marginLeft: 'auto', fontSize: 12, color: '#94a3b8' }}>
           {fmtDate(data.period.from)} – {fmtDate(data.period.to)}
@@ -1268,13 +1302,20 @@ function ProfitabilitySection({ data, warmingUp, loading, period, onPeriodChange
           ]} />
         </Panel>
 
-        <Panel title="Quarterly Trend" className="mt-panel">
+        <Panel title="P&L Trend" className="mt-panel">
+          <div className="panel-toolbar" style={{ marginBottom: 8 }}>
+            <Toggle
+              options={[{ value: 'quarterly', label: 'Quarterly' }, { value: 'annual', label: 'Annual' }]}
+              value={trendView}
+              onChange={setTrendView}
+            />
+          </div>
           <div style={{ height: 260 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={trend} margin={{ top: 8, right: 16, left: -8, bottom: 0 }} barCategoryGap="30%">
+              <BarChart data={displayTrend} margin={{ top: 8, right: 16, left: -8, bottom: 0 }} barCategoryGap="30%">
                 <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" vertical={false} />
                 <XAxis dataKey="period" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false}
-                       tickFormatter={v => trend.find(t => t.period === v)?.complete === false ? `${v} ⏳` : v} />
+                       tickFormatter={v => displayTrend.find(t => t.period === v)?.complete === false ? `${v} ⏳` : v} />
                 <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false}
                        tickFormatter={v => `${(v / 1e7).toFixed(1)}`} />
                 <Tooltip content={({ active, payload, label }) => {
@@ -1286,20 +1327,20 @@ function ProfitabilitySection({ data, warmingUp, loading, period, onPeriodChange
                       <div className="tooltip-row"><span>NII</span><strong>{fmtCr(d?.nii)}</strong></div>
                       <div className="tooltip-row"><span>Net Profit</span><strong>{fmtCr(d?.net_profit)}</strong></div>
                       {d?.complete === false && (
-                        <div className="tooltip-row"><span>Quarter elapsed</span><strong>{d?.elapsed_pct}%</strong></div>
+                        <div className="tooltip-row"><span>{trendView === 'annual' ? 'Year' : 'Quarter'} elapsed</span><strong>{d?.elapsed_pct}%</strong></div>
                       )}
                     </div>
                   )
                 }} cursor={{ fill: 'rgba(29,78,216,0.04)' }} />
                 <Legend wrapperStyle={{ fontSize: 11, color: '#64748b' }} />
                 <Bar dataKey="nii" name="NII" radius={[3, 3, 0, 0]}>
-                  {trend.map((t, i) => (
+                  {displayTrend.map((t, i) => (
                     <Cell key={i} fill="#1d4ed8" fillOpacity={t.complete === false ? 0.4 : 1}
                           stroke={t.complete === false ? '#1d4ed8' : 'none'} strokeDasharray={t.complete === false ? '3 2' : ''} />
                   ))}
                 </Bar>
                 <Bar dataKey="net_profit" name="Net Profit" radius={[3, 3, 0, 0]}>
-                  {trend.map((t, i) => (
+                  {displayTrend.map((t, i) => (
                     <Cell key={i} fill="#15803d" fillOpacity={t.complete === false ? 0.4 : 1}
                           stroke={t.complete === false ? '#15803d' : 'none'} strokeDasharray={t.complete === false ? '3 2' : ''} />
                   ))}
@@ -1307,9 +1348,9 @@ function ProfitabilitySection({ data, warmingUp, loading, period, onPeriodChange
               </BarChart>
             </ResponsiveContainer>
           </div>
-          {trend.some(t => t.complete === false) && (
+          {displayTrend.some(t => t.complete === false) && (
             <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
-              ⏳ Hatched bar = quarter still running ({trend.find(t => t.complete === false)?.elapsed_pct}% elapsed) — not comparable to completed quarters yet.
+              ⏳ Hatched bar = {trendView === 'annual' ? 'year' : 'quarter'} still running ({displayTrend.find(t => t.complete === false)?.elapsed_pct}% elapsed) — not comparable to completed {trendView === 'annual' ? 'years' : 'quarters'} yet.
             </div>
           )}
         </Panel>
@@ -1620,7 +1661,8 @@ function Dashboard({ user, onLogout, bankInfo }) {
   const [advances,  setAdvances]  = useState(null)
   const [alertsData, setAlertsData] = useState(null)
   const [profitability, setProfitability] = useState(null)
-  const [profPeriod, setProfPeriod] = useState('ytd')
+  const [profSelectedFy, setProfSelectedFy] = useState('ytd')  // 'ytd' or a closed FY's f_year
+  const [profFys, setProfFys] = useState([])
   const [profWarmingUp, setProfWarmingUp] = useState(false)
   const [investments, setInvestments] = useState(null)
 
@@ -1678,8 +1720,25 @@ function Dashboard({ user, onLogout, bankInfo }) {
     return () => clearInterval(id)
   }, [])
 
+  const fetchProfFys = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/api/metrics/profitability/fys`)
+      if (!res.ok) return
+      const fys = await res.json()
+      setProfFys(fys)
+    } catch { /* profitability is best-effort; other sections still work */ }
+  }, [])
+
+  useEffect(() => {
+    fetchProfFys()
+    const id = setInterval(fetchProfFys, 60_000)
+    return () => clearInterval(id)
+  }, [fetchProfFys])
+
   const fetchProfitability = useCallback(async () => {
-    const params = new URLSearchParams({ period: profPeriod })
+    const params = profSelectedFy === 'ytd'
+      ? new URLSearchParams({ period: 'ytd' })
+      : new URLSearchParams({ period: 'fy', fy: String(profSelectedFy) })
     if (filters.branch) params.set('branch', filters.branch)
     try {
       const res = await fetch(`${API}/api/metrics/profitability?${params.toString()}`)
@@ -1688,7 +1747,7 @@ function Dashboard({ user, onLogout, bankInfo }) {
       setProfWarmingUp(false)
       setProfitability(await res.json())
     } catch { /* profitability is best-effort; other sections still work */ }
-  }, [filters.branch, profPeriod])
+  }, [filters.branch, profSelectedFy])
 
   useEffect(() => {
     fetchProfitability()
@@ -1755,8 +1814,9 @@ function Dashboard({ user, onLogout, bankInfo }) {
               data={profitability}
               warmingUp={profWarmingUp}
               loading={loading}
-              period={profPeriod}
-              onPeriodChange={setProfPeriod}
+              fys={profFys}
+              selectedFy={profSelectedFy}
+              onFyChange={setProfSelectedFy}
             />
           )}
           {section === 'alerts'    && <AlertsSection    data={alertsData} loading={loading} />}
