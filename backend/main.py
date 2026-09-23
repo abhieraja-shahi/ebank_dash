@@ -148,6 +148,12 @@ NPA: dict      = {}   # branch -> {11: {accounts, amount}, 12: {...}, 13: {...}}
 NPA_CLASS_LABELS = {11: "sub_standard", 12: "doubtful", 13: "loss"}
 KNOWN_ACCT_NATURES = {"SB", "RD", "TL", "DL", "CA", "FD", "PO"}
 
+# Branch code 90 = Head Office / Administrative Office — same code on every bank
+# deployment (per branchmaster). It's not a real branch: deposit/loan business
+# posted under it (staff/GL/admin accounts) isn't branch business and shouldn't
+# appear in branch-wise deposits/advances views.
+HO_BRANCH_CODE = "90"
+
 PROFIT_STATUS = {"ready": False, "pl_as_of": None, "balances_as_of": None, "npa_as_of": None}
 PROFIT_CHECKS: dict = {}
 PROFIT_WARNINGS: list = []
@@ -647,6 +653,11 @@ def branch_clause(alias: str, branch: Optional[str]) -> tuple[str, list]:
     return "", []
 
 
+def exclude_ho(rows: list, key: str = "CurBrCode") -> list:
+    """Drop Head Office (branch 90) rows — see HO_BRANCH_CODE."""
+    return [r for r in rows if r[key] != HO_BRANCH_CODE]
+
+
 def to_yyyymmdd(d: Optional[str]) -> Optional[str]:
     return d.replace("-", "") if d else None
 
@@ -955,11 +966,38 @@ async def get_deposits(
                     COUNT(*)      AS count
                 FROM accountmaster am
                 JOIN accounttypemaster atm ON am.Accttype = atm.AcctCode
-                WHERE atm.acctNature IN ('FD', 'RD') {frag}
+                WHERE atm.acctNature IN ('FD', 'RD', 'SB', 'CA') {frag}
                 GROUP BY am.CurBrCode, atm.AcctCode, atm.AcctDesc, atm.acctNature
                 ORDER BY am.CurBrCode, atm.AcctCode
             """, params)
             acct_type_rows = await cur.fetchall()
+
+            # Balances by branch+type for the SB/RD/CA rows above, so the "by amount"
+            # toggle can show real closing balances (same source tables as Job B /
+            # BALANCES, §5) rather than just counts. FD amounts stay on the existing
+            # BALANCES.fd / td_recon path (td_vouchmst.PrinAmt misses capitalised
+            # interest — see §11), so FD isn't part of this per-code query.
+            await cur.execute(f"""
+                SELECT am.CurBrCode, am.Accttype AS code, SUM(rb.Balance) AS amount
+                FROM reconbalan rb
+                JOIN accountmaster am ON am.ACNo = rb.acno
+                JOIN accounttypemaster atm ON atm.AcctCode = am.Accttype
+                WHERE am.AccStatus <> 9 AND atm.acctNature IN ('SB', 'RD') {frag}
+                GROUP BY am.CurBrCode, am.Accttype
+            """, params)
+            sb_rd_amt_rows = await cur.fetchall()
+
+            # Current-account balances: GREATEST(...,0) matches BAL_CA_SQL — only the
+            # credit (deposit) side, excluding overdrawn/OD balances which are advances.
+            await cur.execute(f"""
+                SELECT am.CurBrCode, am.Accttype AS code, SUM(GREATEST(cb.Balance, 0)) AS amount
+                FROM ca_reconbalan cb
+                JOIN accountmaster am ON am.ACNo = cb.acno
+                JOIN accounttypemaster atm ON atm.AcctCode = am.Accttype
+                WHERE am.AccStatus <> 9 AND atm.acctNature = 'CA' {frag}
+                GROUP BY am.CurBrCode, am.Accttype
+            """, params)
+            ca_amt_rows = await cur.fetchall()
 
             # Forward-looking maturity ladder: only FDs that haven't matured yet,
             # bucketed by month for the next 6 months. Calendar-quarter buckets
@@ -996,6 +1034,13 @@ async def get_deposits(
             """, params_td)
             mat_row = await cur.fetchone()
 
+    # HO (branch 90) isn't a real branch — it never carries genuine deposit business,
+    # so it's dropped everywhere below (KPI totals, deposit_types, branch_breakdown).
+    td_rows        = exclude_ho(td_rows)
+    acct_type_rows = exclude_ho(acct_type_rows)
+    sb_rd_amt_rows = exclude_ho(sb_rd_amt_rows)
+    ca_amt_rows    = exclude_ho(ca_amt_rows)
+
     td_count     = sum(r["count"] for r in td_rows)
     td_maturity  = sum(float(r["maturity_amt"] or 0) for r in td_rows)
 
@@ -1003,42 +1048,55 @@ async def get_deposits(
     # BALANCES (§5/§11 of the profitability spec — td_recon with closeflag IS NULL),
     # not td_vouchmst.PrinAmt which misses interest added to cumulative FDs.
     if branch:
-        fd_by_branch = {branch: BALANCES.get(branch, {}).get("fd", 0.0)}
+        fd_by_branch = {branch: BALANCES.get(branch, {}).get("fd", 0.0)} if branch != HO_BRANCH_CODE else {}
     else:
-        fd_by_branch = {bc: b.get("fd", 0.0) for bc, b in BALANCES.items()}
+        fd_by_branch = {bc: b.get("fd", 0.0) for bc, b in BALANCES.items() if bc != HO_BRANCH_CODE}
     td_principal = sum(fd_by_branch.values())
+
+    # Per-branch+code amount lookup for the "by amount" toggle (SB/RD/CA only — FD
+    # amounts come from fd_by_branch above).
+    amt_by_code: dict = {}
+    for r in sb_rd_amt_rows:
+        amt_by_code[(r["CurBrCode"], r["code"])] = float(r["amount"] or 0)
+    for r in ca_amt_rows:
+        amt_by_code[(r["CurBrCode"], r["code"])] = float(r["amount"] or 0)
 
     # Build deposit_types summary dynamically from accounttypemaster acctNature
     type_totals: dict = {}
     for r in acct_type_rows:
         code = r["code"]
         if code not in type_totals:
-            type_totals[code] = {"code": code, "label": r["label"], "nature": r["nature"], "count": 0}
-        type_totals[code]["count"] += r["count"]
+            type_totals[code] = {"code": code, "label": r["label"], "nature": r["nature"], "count": 0, "amount": 0.0}
+        type_totals[code]["count"]  += r["count"]
+        type_totals[code]["amount"] += amt_by_code.get((r["CurBrCode"], code), 0.0)
     deposit_types = sorted(type_totals.values(), key=lambda x: x["code"])
     acct_type_total = sum(t["count"] for t in deposit_types)
+    acct_type_amount_total = sum(t["amount"] for t in deposit_types)
 
     # Build per-branch map
+    def _new_branch_row(bc):
+        return {"branch_code": bc, "branch": BRANCH_NAMES.get(bc, bc),
+                "td_count": 0, "td_principal": 0.0}
+
     branch_map: dict = {}
     for r in td_rows:
         bc = r["CurBrCode"]
-        branch_map.setdefault(bc, {"branch_code": bc, "branch": BRANCH_NAMES.get(bc, bc),
-                                   "td_count": 0, "td_principal": 0.0})
+        branch_map.setdefault(bc, _new_branch_row(bc))
         branch_map[bc]["td_count"]     = r["count"]
         branch_map[bc]["td_principal"] = fd_by_branch.get(bc, 0.0)
     for r in acct_type_rows:
-        bc = r["CurBrCode"]
-        branch_map.setdefault(bc, {"branch_code": bc, "branch": BRANCH_NAMES.get(bc, bc),
-                                   "td_count": 0, "td_principal": 0.0})
-        branch_map[bc][r["code"]] = branch_map[bc].get(r["code"], 0) + r["count"]
+        bc, code = r["CurBrCode"], r["code"]
+        branch_map.setdefault(bc, _new_branch_row(bc))
+        branch_map[bc][code] = branch_map[bc].get(code, 0) + r["count"]
+        branch_map[bc][f"{code}_amt"] = branch_map[bc].get(f"{code}_amt", 0.0) + amt_by_code.get((bc, code), 0.0)
     for bc, fd_amt in fd_by_branch.items():
-        branch_map.setdefault(bc, {"branch_code": bc, "branch": BRANCH_NAMES.get(bc, bc),
-                                   "td_count": 0, "td_principal": 0.0})
+        branch_map.setdefault(bc, _new_branch_row(bc))
         branch_map[bc]["td_principal"] = fd_amt
 
     branch_data = sorted(branch_map.values(), key=lambda x: x["branch_code"])
     for b in branch_data:
         b["total_accounts"] = b["td_count"] + sum(b.get(t["code"], 0) for t in deposit_types)
+        b["total_amount"]   = b["td_principal"] + sum(b.get(f"{t['code']}_amt", 0.0) for t in deposit_types)
 
     # Zero-fill all 6 months so the ladder shows genuine gaps, not missing bars.
     ladder_months = []
@@ -1054,6 +1112,7 @@ async def get_deposits(
         "td_maturity":   td_maturity,
         "deposit_types": deposit_types,
         "total_deposit_accounts": td_count + acct_type_total,
+        "total_deposit_amount":   td_principal + acct_type_amount_total,
         "maturity_window": "Next 6 Months",
         "maturity_trend": [
             {"month": datetime.strptime(ym, "%Y-%m").strftime("%b %Y"),
@@ -1101,7 +1160,7 @@ async def get_advances(
                 GROUP BY am.CurBrCode
                 ORDER BY am.CurBrCode
             """, params)
-            loan_rows = await cur.fetchall()
+            loan_rows = exclude_ho(await cur.fetchall())
 
             await cur.execute(f"""
                 SELECT am.Accttype, COUNT(*) AS count, SUM(lbd.SANCTION_AMT) AS sanction_amt
@@ -1166,6 +1225,7 @@ async def get_advances(
 
     loan_by_branch = {r["CurBrCode"]: r for r in loan_rows}
     all_branches = set(loan_by_branch) | set(NPA.keys() if not branch else ({branch} & set(NPA.keys())))
+    all_branches.discard(HO_BRANCH_CODE)  # HO isn't a real branch — no genuine advances business
     branch_data = []
     for bc in sorted(all_branches):
         lr = loan_by_branch.get(bc, {"count": 0, "sanction_amt": 0})

@@ -263,19 +263,24 @@ function KpiCard({ icon, label, value, sub, accent = 'blue' }) {
   )
 }
 
-function Panel({ title, badge, badgeVariant = 'blue', children, className = '' }) {
+function Panel({ title, badge, badgeVariant = 'blue', children, className = '', collapsible = false, defaultCollapsed = false }) {
+  const [collapsed, setCollapsed] = useState(collapsible && defaultCollapsed)
   return (
     <div className={`panel ${className}`}>
-      <div className="panel-header">
-        <span className="panel-title">{title}</span>
+      <div className={`panel-header ${collapsible ? 'panel-header-collapsible' : ''}`}
+           onClick={collapsible ? () => setCollapsed(c => !c) : undefined}>
+        <span className="panel-title">
+          {collapsible && <span className={`panel-collapse-chevron ${collapsed ? 'is-collapsed' : ''}`}>▾</span>}
+          {title}
+        </span>
         {badge && <span className={`badge badge-${badgeVariant}`}>{badge}</span>}
       </div>
-      <div className="panel-body">{children}</div>
+      {!collapsed && <div className="panel-body">{children}</div>}
     </div>
   )
 }
 
-function ChartTip({ active, payload, label }) {
+function ChartTip({ active, payload, label, formatter = fmtNum }) {
   if (!active || !payload?.length) return null
   return (
     <div className="chart-tooltip">
@@ -283,7 +288,7 @@ function ChartTip({ active, payload, label }) {
       {payload.filter(p => p.value != null).map((p, i) => (
         <div key={i} className="tooltip-row">
           <span>{p.name}</span>
-          <strong style={{ color: p.color }}>{fmtNum(p.value)}</strong>
+          <strong style={{ color: p.color }}>{formatter(p.value)}</strong>
         </div>
       ))}
     </div>
@@ -752,115 +757,202 @@ function AccountsSection({ data, loading, filters }) {
 
 // ─── Section: Deposits ────────────────────────────────────────────────────────
 
-const DEPOSIT_TYPE_COLORS = ['#0891b2', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0f766e', '#9333ea']
 const DEPOSIT_TYPE_ACCENTS = ['cyan', 'purple', 'green', 'amber', 'red', 'cyan', 'purple']
 const DEPOSIT_TYPE_ICONS   = { RD: '🔄', FD: '📋' }
+const NATURE_LABELS = { RD: 'Recurring Deposits', SB: 'Savings Deposits', CA: 'Current A/c Deposits' }
+const NATURE_COLORS = { RD: '#7c3aed', SB: '#0891b2', CA: '#059669' }
 
 function DepositsSection({ data, loading }) {
+  const [viewMode, setViewMode] = useState('count')
+  const [typeFilter, setTypeFilter] = useState('all') // 'all' | 'FD' | 'RD' | 'SB' | 'CA'
+  const [subtypeFilter, setSubtypeFilter] = useState('all') // code within typeFilter's nature, or 'all'
   if (loading || !data) return <Spinner />
   const types = data.deposit_types || []
+  // Individual KPI cards stay scoped to FD/RD (as before) so Savings/Current
+  // don't explode into one card per account sub-type; they're summarised below.
+  const kpiTypes = types.filter(t => t.nature === 'FD' || t.nature === 'RD')
+  const savings  = types.filter(t => t.nature === 'SB')
+  const other    = types.filter(t => t.nature === 'CA')
+  const savingsTotal = { count: savings.reduce((s, t) => s + t.count, 0), amount: savings.reduce((s, t) => s + t.amount, 0) }
+  const otherTotal   = { count: other.reduce((s, t) => s + t.count, 0),   amount: other.reduce((s, t) => s + t.amount, 0) }
+
+  const isAmt = viewMode === 'amount'
+
+  // Group the (often dozens of) raw account sub-types into their nature — RD/SB/CA
+  // — so the branch chart/table show a handful of meaningful series instead of one
+  // bar per sub-type. FD stays on the existing td_count/td_principal fields (the
+  // trusted source; see BALANCES), not this grouping.
+  const byNature = {}
+  for (const t of types) {
+    if (t.nature === 'FD') continue
+    byNature[t.nature] = byNature[t.nature] || { codes: [] }
+    byNature[t.nature].codes.push({ code: t.code, label: t.label })
+  }
+  const natureOptions = Object.keys(byNature)
+  const typeDropdownOptions = [
+    { value: 'all', label: 'All Types (Grouped)' },
+    { value: 'FD',  label: 'Term Deposits (FD)' },
+    ...natureOptions.map(n => ({ value: n, label: NATURE_LABELS[n] || n })),
+  ]
+  // Subtype dropdown only makes sense once a single nature (RD/SB/CA) is selected —
+  // it lets the user drill from the grouped nature into one raw account sub-type.
+  const subtypeOptions = natureOptions.includes(typeFilter)
+    ? [{ value: 'all', label: `All ${NATURE_LABELS[typeFilter] || typeFilter} Subtypes` },
+       ...byNature[typeFilter].codes.map(c => ({ value: c.code, label: c.label }))]
+    : null
+  const codesForNature = n => (typeFilter === n && subtypeFilter !== 'all')
+    ? byNature[n].codes.filter(c => c.code === subtypeFilter)
+    : byNature[n].codes
+  const natureValue  = (b, n, wantAmt) => codesForNature(n).reduce((s, c) => s + (wantAmt ? (b[`${c.code}_amt`] || 0) : (b[c.code] || 0)), 0)
+  const natureAmount = (b, n) => natureValue(b, n, isAmt)
+  const natureLabel = n => (typeFilter === n && subtypeFilter !== 'all')
+    ? (byNature[n].codes.find(c => c.code === subtypeFilter)?.label || NATURE_LABELS[n] || n)
+    : (NATURE_LABELS[n] || n)
+
+  const showFD = typeFilter === 'all' || typeFilter === 'FD'
+  const shownNatures = typeFilter === 'all' ? natureOptions : natureOptions.filter(n => n === typeFilter)
+
   const branchChartData = data.branch_breakdown.map(b => {
-    const obj = { name: b.branch, td: b.td_count }
-    types.forEach(t => { obj[t.code] = b[t.code] || 0 })
+    const obj = { name: b.branch }
+    if (showFD) obj.td = isAmt ? b.td_principal : b.td_count
+    shownNatures.forEach(n => { obj[n] = natureAmount(b, n) })
     return obj
   })
-  const dynamicBranchCols = types.map(t => ({
-    key: t.code, label: t.label, numeric: true, render: r => fmtNum(r[t.code] || 0)
-  }))
+  const dynamicBranchCols = shownNatures.flatMap(n => [
+    { key: `${n}_count`, label: `${natureLabel(n)} (Count)`,  numeric: true, render: r => fmtNum(natureValue(r, n, false)) },
+    { key: `${n}_amt`,   label: `${natureLabel(n)} (Amount)`, numeric: true, render: r => fmtCr(natureValue(r, n, true)) },
+  ])
+  // Badge total tracks the current Type/Show selection instead of always the
+  // whole-book figure, so it reads correctly once the chart is filtered down.
+  const selectedTotal = branchChartData.reduce(
+    (sum, b) => sum + (b.td || 0) + shownNatures.reduce((s, n) => s + (b[n] || 0), 0), 0
+  )
+  const selectedTotalLabel = isAmt ? fmtCr(selectedTotal) : fmtNum(selectedTotal)
   return (
     <>
       <div className="kpi-bar">
         <KpiCard icon="📄" label="Term Deposits (FD)"  value={fmtNum(data.td_count)}    sub={fmtCr(data.td_principal) + ' principal'} accent="blue"   />
-        {types.map((t, i) => (
+        {kpiTypes.map((t, i) => (
           <KpiCard key={t.code}
             icon={DEPOSIT_TYPE_ICONS[t.nature] || '📋'}
             label={t.label}
             value={fmtNum(t.count)}
-            sub={`Active ${t.nature} accounts`}
+            sub={`${fmtCr(t.amount)} balance`}
             accent={DEPOSIT_TYPE_ACCENTS[i % DEPOSIT_TYPE_ACCENTS.length]}
           />
         ))}
-        <KpiCard icon="💰" label="Total Deposit Book"  value={fmtCr(data.td_principal)} sub={`${fmtNum(data.total_deposit_accounts)} accounts`} accent="green" />
+        <KpiCard icon="🏦" label="Savings Deposits"    value={fmtNum(savingsTotal.count)} sub={`${fmtCr(savingsTotal.amount)} balance`} accent="cyan"   />
+        <KpiCard icon="💳" label="Current A/c Deposits" value={fmtNum(otherTotal.count)}   sub={`${fmtCr(otherTotal.amount)} balance`}   accent="purple" />
+        <KpiCard icon="💰" label="Total Deposit Book"  value={fmtCr(data.total_deposit_amount)} sub={`${fmtNum(data.total_deposit_accounts)} accounts`} accent="green" />
         <KpiCard icon="📅" label="Maturity Value (FD)" value={fmtCr(data.td_maturity)}  sub="Accumulated at maturity"                 accent="amber"  />
       </div>
 
-      {/* FD Maturity Warning strip */}
-      {(data.fd_maturing_7d > 0 || data.fd_maturing_30d > 0) && (
-        <div className="maturity-strip">
-          {data.fd_maturing_7d > 0 && (
-            <div className="maturity-chip maturity-urgent">
-              <span className="maturity-chip-label">Next 7 days</span>
-              <span className="maturity-chip-count">{fmtNum(data.fd_maturing_7d)} FDs</span>
-              <span className="maturity-chip-amt">{fmtCr(data.fd_maturing_7d_amt)}</span>
-            </div>
-          )}
-          {data.fd_maturing_30d > 0 && (
-            <div className="maturity-chip maturity-warn">
-              <span className="maturity-chip-label">Next 30 days</span>
-              <span className="maturity-chip-count">{fmtNum(data.fd_maturing_30d)} FDs</span>
-              <span className="maturity-chip-amt">{fmtCr(data.fd_maturing_30d_amt)}</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="two-col-grid">
-        <Panel title="Deposit Accounts by Branch & Type" badge={`${fmtNum(data.total_deposit_accounts)} Total`}>
+      <Panel title="Deposit Accounts by Branch & Type" badge={`${selectedTotalLabel} Total`}>
+          <div className="panel-toolbar">
+            <span className="panel-toolbar-label">Show:</span>
+            <Toggle
+              options={[{ value: 'count', label: 'By Count' }, { value: 'amount', label: 'By Amount' }]}
+              value={viewMode}
+              onChange={setViewMode}
+            />
+            <span className="panel-toolbar-group">
+              <span className="panel-toolbar-label" style={{ marginLeft: 8 }}>Type:</span>
+              <select className="panel-select" value={typeFilter}
+                      onChange={e => { setTypeFilter(e.target.value); setSubtypeFilter('all') }}>
+                {typeDropdownOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </span>
+            {subtypeOptions && (
+              <span className="panel-toolbar-group">
+                <span className="panel-toolbar-label" style={{ marginLeft: 8 }}>Subtype:</span>
+                <select className="panel-select" value={subtypeFilter} onChange={e => setSubtypeFilter(e.target.value)}>
+                  {subtypeOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </span>
+            )}
+          </div>
           <div style={{ height: 250 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={branchChartData} margin={{ top: 8, right: 16, left: -8, bottom: 0 }} barCategoryGap="25%">
                 <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" vertical={false} />
                 <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false}
-                       tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
-                <Tooltip content={<ChartTip />} cursor={{ fill: 'rgba(29,78,216,0.04)' }} />
+                       tickFormatter={v => isAmt
+                         ? (v >= 1e7 ? `${(v/1e7).toFixed(1)}Cr` : v >= 1e5 ? `${(v/1e5).toFixed(0)}L` : v)
+                         : (v >= 1000 ? `${(v/1000).toFixed(0)}k` : v)} />
+                <Tooltip content={isAmt ? <ChartTip formatter={fmtCr} /> : <ChartTip />} cursor={{ fill: 'rgba(29,78,216,0.04)' }} />
                 <Legend wrapperStyle={{ fontSize: 11, color: '#64748b' }} />
-                <Bar dataKey="td" name="Term Deposit" fill="#1d4ed8" radius={[3, 3, 0, 0]} />
-                {types.map((t, i) => (
-                  <Bar key={t.code} dataKey={t.code} name={t.label}
-                       fill={DEPOSIT_TYPE_COLORS[i % DEPOSIT_TYPE_COLORS.length]} radius={[3, 3, 0, 0]} />
+                {showFD && <Bar dataKey="td" name="Term Deposit" fill="#1d4ed8" radius={[3, 3, 0, 0]} />}
+                {shownNatures.map(n => (
+                  <Bar key={n} dataKey={n} name={natureLabel(n)}
+                       fill={NATURE_COLORS[n] || '#64748b'} radius={[3, 3, 0, 0]} />
                 ))}
               </BarChart>
             </ResponsiveContainer>
           </div>
         </Panel>
-        <Panel title={`TD Maturity Ladder — ${data.maturity_window || 'Next 6 Months'}`}>
-          {data.maturity_trend.length === 0
-            ? <div className="empty-state">No maturity data for selected period</div>
-            : (
-              <div style={{ height: 250 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={data.maturity_trend} margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" vertical={false} />
-                    <XAxis dataKey="month" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
-                    <Tooltip cursor={{ fill: 'rgba(29,78,216,0.04)' }}
-                             content={({ active, payload, label }) => {
-                               if (!active || !payload?.length) return null
-                               const d = payload[0]?.payload
-                               return (
-                                 <div className="chart-tooltip">
-                                   <div className="tooltip-label">{label} — Maturities</div>
-                                   <div className="tooltip-row"><span>Count</span><strong>{fmtNum(d?.count)}</strong></div>
-                                   <div className="tooltip-row"><span>Amount</span><strong>{fmtCr(d?.amount)}</strong></div>
-                                 </div>
-                               )
-                             }} />
-                    <Bar dataKey="count" name="Maturing FDs" fill="#1d4ed8" radius={[3, 3, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+
+      <Panel title="Branch-wise Deposit Summary" className="mt-panel" collapsible>
+        <BranchTable rows={data.branch_breakdown} columns={[
+          { key: 'branch', label: 'Branch' },
+          ...(showFD ? [
+            { key: 'td_count',     label: 'Term Deposits', numeric: true, render: r => fmtNum(r.td_count) },
+            { key: 'td_principal', label: 'FD Principal',  numeric: true, render: r => fmtCr(r.td_principal) },
+          ] : []),
+          ...dynamicBranchCols,
+          { key: 'total_accounts', label: 'Total (Count)',  numeric: true,
+            render: r => fmtNum(r.total_accounts), style: () => ({ fontWeight: 600 }) },
+          { key: 'total_amount',   label: 'Total (Amount)', numeric: true,
+            render: r => fmtCr(r.total_amount), style: () => ({ fontWeight: 600 }) },
+        ]} />
+      </Panel>
+
+      <Panel title={`TD Maturity Ladder — ${data.maturity_window || 'Next 6 Months'}`}
+             className="mt-panel" collapsible>
+        {(data.fd_maturing_7d > 0 || data.fd_maturing_30d > 0) && (
+          <div className="maturity-strip">
+            {data.fd_maturing_7d > 0 && (
+              <div className="maturity-chip maturity-urgent">
+                <span className="maturity-chip-label">Next 7 days</span>
+                <span className="maturity-chip-count">{fmtNum(data.fd_maturing_7d)} FDs</span>
+                <span className="maturity-chip-amt">{fmtCr(data.fd_maturing_7d_amt)}</span>
               </div>
             )}
-        </Panel>
-      </div>
-      <Panel title="Branch-wise Deposit Summary" className="mt-panel">
-        <BranchTable rows={data.branch_breakdown} columns={[
-          { key: 'branch',         label: 'Branch' },
-          { key: 'td_count',       label: 'Term Deposits', numeric: true, render: r => fmtNum(r.td_count) },
-          { key: 'td_principal',   label: 'FD Principal',  numeric: true, render: r => fmtCr(r.td_principal) },
-          ...dynamicBranchCols,
-          { key: 'total_accounts', label: 'Total',         numeric: true, render: r => fmtNum(r.total_accounts), style: () => ({ fontWeight: 600 }) },
-        ]} />
+            {data.fd_maturing_30d > 0 && (
+              <div className="maturity-chip maturity-warn">
+                <span className="maturity-chip-label">Next 30 days</span>
+                <span className="maturity-chip-count">{fmtNum(data.fd_maturing_30d)} FDs</span>
+                <span className="maturity-chip-amt">{fmtCr(data.fd_maturing_30d_amt)}</span>
+              </div>
+            )}
+          </div>
+        )}
+        {data.maturity_trend.length === 0
+          ? <div className="empty-state">No maturity data for selected period</div>
+          : (
+            <div style={{ height: 250 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data.maturity_trend} margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e8edf3" vertical={false} />
+                  <XAxis dataKey="month" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <Tooltip cursor={{ fill: 'rgba(29,78,216,0.04)' }}
+                           content={({ active, payload, label }) => {
+                             if (!active || !payload?.length) return null
+                             const d = payload[0]?.payload
+                             return (
+                               <div className="chart-tooltip">
+                                 <div className="tooltip-label">{label} — Maturities</div>
+                                 <div className="tooltip-row"><span>Count</span><strong>{fmtNum(d?.count)}</strong></div>
+                                 <div className="tooltip-row"><span>Amount</span><strong>{fmtCr(d?.amount)}</strong></div>
+                               </div>
+                             )
+                           }} />
+                  <Bar dataKey="count" name="Maturing FDs" fill="#1d4ed8" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
       </Panel>
     </>
   )
@@ -946,7 +1038,7 @@ function AdvancesSection({ data, loading }) {
         </Panel>
       </div>
 
-      <Panel title="Branch-wise Advances Summary" className="mt-panel">
+      <Panel title="Branch-wise Advances Summary" className="mt-panel" collapsible>
         <div className="panel-toolbar">
           <span className="panel-toolbar-label">NPA ratio view:</span>
           <Toggle
@@ -966,7 +1058,7 @@ function AdvancesSection({ data, loading }) {
             numeric: true,
             render: r => {
               const v = npaView === 'count' ? r.npa_ratio : r.npa_ratio_amount
-              return `${v}%`
+              return `${v}% (${fmtCr(r.npa_sanction)})`
             },
             style: r => {
               const v = npaView === 'count' ? r.npa_ratio : r.npa_ratio_amount
@@ -977,7 +1069,7 @@ function AdvancesSection({ data, loading }) {
         ]} />
       </Panel>
 
-      <Panel title="Loan Type Breakdown" className="mt-panel">
+      <Panel title="Loan Type Breakdown" className="mt-panel" collapsible>
         <BranchTable rows={data.type_breakdown} columns={[
           { key: 'name',   label: 'Loan Type' },
           { key: 'count',  label: 'Accounts',       numeric: true, render: r => fmtNum(r.count) },
