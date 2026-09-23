@@ -53,6 +53,27 @@ const ICONS = {
   calendar: <Icon rect={[3, 4, 18, 18, 2]} d="M16 2v4M8 2v4M3 10h18" />,
   user: <Icon d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" circle={[12, 7, 4]} />,
   bell: <Icon d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />,
+
+  // KPI tile icons — monochrome, inherit color from the tile's accent
+  clipboard:     <Icon rect={[4, 4, 16, 17, 2]} d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z" line={[[8, 10, 16, 10], [8, 13, 16, 13], [8, 16, 13, 16]]} />,
+  trendingUp:    <Icon d="M23 6L13.5 15.5L8.5 10.5L1 18" d2="M17 6h6v6" />,
+  checkCircle:   <Icon circle={[12, 12, 9]} d="M8 12l3 3 6-6" />,
+  alertTriangle: <Icon d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" d2="M12 9v4M12 17h.01" />,
+  bank:          <Icon d="M3 21h18M4 10h16M12 3L4 9h16z" d2="M6 21V10M10 21V10M14 21V10M18 21V10" />,
+  briefcase:     <Icon rect={[2, 7, 20, 13, 2]} d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" d2="M2 13h20" />,
+  card:          <Icon rect={[2, 5, 20, 14, 3]} line={[[2, 10, 22, 10]]} />,
+  money:         <Icon circle={[12, 12, 9]} d="M12 7v10M15 9.5c0-1.5-1.5-2-3-2s-3 .5-3 2 1.5 2 3 2 3 .5 3 2-1.5 2-3 2-3-.5-3-2" />,
+  fileText:      <Icon rect={[4, 3, 16, 18, 2]} line={[[8, 8, 16, 8], [8, 12, 16, 12], [8, 16, 13, 16]]} />,
+  clock:         <Icon circle={[12, 12, 10]} d="M12 6v6l4 2" />,
+  barChart:      <Icon line={[[4, 20, 4, 10], [12, 20, 12, 4], [20, 20, 20, 14]]} />,
+  dollarSign:    <Icon circle={[12, 12, 9]} d="M12 6v12M9 9c0-1 1-1.5 3-1.5s3 .5 3 1.5-1.5 1.5-3 1.5-3 .5-3 1.5 1.5 1.5 3 1.5 3-.5 3-1.5" />,
+  shield:        <Icon d="M12 2L4 5v6c0 5 3.5 9 8 11 4.5-2 8-6 8-11V5z" />,
+  ruler:         <Icon d="M3 17l14-14 4 4L7 21z" d2="M14 6l2 2M11 9l2 2M8 12l2 2M5 15l2 2" />,
+  book:          <Icon d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" d2="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />,
+  package:       <Icon d="M21 8L12 3 3 8l9 5 9-5z" d2="M3 8v9l9 5 9-5V8M12 13v9" />,
+  target:        <Icon circle={[12, 12, 8]} d="M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" d2="M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />,
+  siren:         <Icon d="M12 2l3 3h4l1 4 3 3-3 3-1 4h-4l-3 3-3-3H5l-1-4-3-3 3-3 1-4h4z" d2="M12 8v4M12 16h.01" />,
+  refresh:       <Icon d="M23 4v6h-6M1 20v-6h6" d2="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" />,
 }
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
@@ -385,11 +406,11 @@ function OverviewSection({ accounts, kyc, loans, alertsSummary, loading }) {
       )}
 
       <div className="kpi-bar">
-        <KpiCard icon="👥" label="Total Customers"     value={fmtNum(accounts?.total_customers)} sub="Registered profiles" accent="blue" />
-        <KpiCard icon="📋" label="Total Accounts"      value={fmtNum(accounts?.total)} sub={`${fmtNum(accounts?.sb_total)} SB · ${fmtNum(accounts?.ca_total)} CA`} accent="blue" />
-        <KpiCard icon="📈" label="New in Period"       value={fmtNum(accounts?.new_in_period)} sub={accounts?.period_label || 'All time'} accent="cyan" />
-        <KpiCard icon="✅" label="KYC Compliance"      value={kyc ? `${kyc.compliance_rate}%` : null} sub={`${fmtNum(kyc?.pending)} pending`} accent={kycColor} />
-        <KpiCard icon="⚠️" label="NPA Ratio"           value={loans ? `${loans.npa_ratio}%` : null} sub={`${fmtNum(loans?.npa_count)} stressed (by count)`} accent={npaAccent} />
+        <KpiCard icon={ICONS.accounts} label="Total Customers"     value={fmtNum(accounts?.total_customers)} sub="Registered profiles" accent="blue" />
+        <KpiCard icon={ICONS.clipboard} label="Total Accounts"      value={fmtNum(accounts?.total)} sub={`${fmtNum(accounts?.sb_total)} SB · ${fmtNum(accounts?.ca_total)} CA`} accent="blue" />
+        <KpiCard icon={ICONS.trendingUp} label="New in Period"       value={fmtNum(accounts?.new_in_period)} sub={accounts?.period_label || 'All time'} accent="cyan" />
+        <KpiCard icon={ICONS.checkCircle} label="KYC Compliance"      value={kyc ? `${kyc.compliance_rate}%` : null} sub={`${fmtNum(kyc?.pending)} pending`} accent={kycColor} />
+        <KpiCard icon={ICONS.alertTriangle} label="NPA Ratio"           value={loans ? `${loans.npa_ratio}%` : null} sub={`${fmtNum(loans?.npa_count)} stressed (by count)`} accent={npaAccent} />
       </div>
 
       <div className="main-grid">
@@ -639,10 +660,10 @@ function AccountsSection({ data, loading, filters }) {
   return (
     <>
       <div className="kpi-bar">
-        <KpiCard icon="🏦" label="Saving Bank Accounts" value={fmtNum(data.sb_total)}        sub="All branches"    accent="blue"   />
-        <KpiCard icon="💼" label="Current Accounts"     value={fmtNum(data.ca_total)}        sub="All branches"    accent="cyan"   />
-        <KpiCard icon="📈" label="New in Period"        value={fmtNum(data.new_in_period)}   sub={data.period_label || 'All time'} accent="green"  />
-        <KpiCard icon="👥" label="Total Customers"      value={fmtNum(data.total_customers)} sub="Registered"      accent="purple" />
+        <KpiCard icon={ICONS.bank} label="Saving Bank Accounts" value={fmtNum(data.sb_total)}        sub="All branches"    accent="blue"   />
+        <KpiCard icon={ICONS.briefcase} label="Current Accounts"     value={fmtNum(data.ca_total)}        sub="All branches"    accent="cyan"   />
+        <KpiCard icon={ICONS.trendingUp} label="New in Period"        value={fmtNum(data.new_in_period)}   sub={data.period_label || 'All time'} accent="green"  />
+        <KpiCard icon={ICONS.accounts} label="Total Customers"      value={fmtNum(data.total_customers)} sub="Registered"      accent="purple" />
       </div>
 
       {/* Total Accounts status breakdown */}
@@ -798,7 +819,7 @@ function AccountsSection({ data, loading, filters }) {
 // ─── Section: Deposits ────────────────────────────────────────────────────────
 
 const DEPOSIT_TYPE_ACCENTS = ['cyan', 'purple', 'green', 'amber', 'red', 'cyan', 'purple']
-const DEPOSIT_TYPE_ICONS   = { RD: '🔄', FD: '📋' }
+const DEPOSIT_TYPE_ICONS   = { RD: ICONS.refresh, FD: ICONS.clipboard }
 const NATURE_LABELS = { RD: 'Recurring Deposits', SB: 'Savings Deposits', CA: 'Current A/c Deposits' }
 const NATURE_COLORS = { RD: '#7c3aed', SB: '#0891b2', CA: '#059669' }
 
@@ -871,20 +892,20 @@ function DepositsSection({ data, loading }) {
   return (
     <>
       <div className="kpi-bar">
-        <KpiCard icon="📄" label="Term Deposits (FD)"  value={fmtNum(data.td_count)}    sub={fmtCr(data.td_principal) + ' principal'} accent="blue"   />
+        <KpiCard icon={ICONS.fileText} label="Term Deposits (FD)"  value={fmtNum(data.td_count)}    sub={fmtCr(data.td_principal) + ' principal'} accent="blue"   />
         {kpiTypes.map((t, i) => (
           <KpiCard key={t.code}
-            icon={DEPOSIT_TYPE_ICONS[t.nature] || '📋'}
+            icon={DEPOSIT_TYPE_ICONS[t.nature] || ICONS.clipboard}
             label={t.label}
             value={fmtNum(t.count)}
             sub={`${fmtCr(t.amount)} balance`}
             accent={DEPOSIT_TYPE_ACCENTS[i % DEPOSIT_TYPE_ACCENTS.length]}
           />
         ))}
-        <KpiCard icon="🏦" label="Savings Deposits"    value={fmtNum(savingsTotal.count)} sub={`${fmtCr(savingsTotal.amount)} balance`} accent="cyan"   />
-        <KpiCard icon="💳" label="Current A/c Deposits" value={fmtNum(otherTotal.count)}   sub={`${fmtCr(otherTotal.amount)} balance`}   accent="purple" />
-        <KpiCard icon="💰" label="Total Deposit Book"  value={fmtCr(data.total_deposit_amount)} sub={`${fmtNum(data.total_deposit_accounts)} accounts`} accent="green" />
-        <KpiCard icon="📅" label="Maturity Value (FD)" value={fmtCr(data.td_maturity)}  sub="Accumulated at maturity"                 accent="amber"  />
+        <KpiCard icon={ICONS.bank} label="Savings Deposits"    value={fmtNum(savingsTotal.count)} sub={`${fmtCr(savingsTotal.amount)} balance`} accent="cyan"   />
+        <KpiCard icon={ICONS.card} label="Current A/c Deposits" value={fmtNum(otherTotal.count)}   sub={`${fmtCr(otherTotal.amount)} balance`}   accent="purple" />
+        <KpiCard icon={ICONS.money} label="Total Deposit Book"  value={fmtCr(data.total_deposit_amount)} sub={`${fmtNum(data.total_deposit_accounts)} accounts`} accent="green" />
+        <KpiCard icon={ICONS.calendar} label="Maturity Value (FD)" value={fmtCr(data.td_maturity)}  sub="Accumulated at maturity"                 accent="amber"  />
       </div>
 
       <Panel title="Deposit Accounts by Branch & Type" badge={`${selectedTotalLabel} Total`}>
@@ -1030,12 +1051,12 @@ function AdvancesSection({ data, loading }) {
   return (
     <>
       <div className="kpi-bar">
-        <KpiCard icon="📑" label="Total Loan Accounts"   value={fmtNum(data.total)}      sub="All types"                              accent="blue"   />
-        <KpiCard icon="✅" label="Standard (Performing)" value={fmtNum(data.standard)}   sub={`of ${fmtNum(data.total)} accounts`}    accent="green"  />
-        <KpiCard icon="⚠️" label="Gross NPA"             value={data.npa_ready === false ? '—' : fmtNum(data.npa_count)}
+        <KpiCard icon={ICONS.clipboard} label="Total Loan Accounts"   value={fmtNum(data.total)}      sub="All types"                              accent="blue"   />
+        <KpiCard icon={ICONS.checkCircle} label="Standard (Performing)" value={fmtNum(data.standard)}   sub={`of ${fmtNum(data.total)} accounts`}    accent="green"  />
+        <KpiCard icon={ICONS.alertTriangle} label="Gross NPA"             value={data.npa_ready === false ? '—' : fmtNum(data.npa_count)}
                  sub={data.npa_ready === false ? 'Loading NPA data — refresh shortly' : fmtCr(data.npa_sanction) + ' outstanding'} accent="red"  />
-        <KpiCard icon="🕐" label="Dormant (No Txn >90d)" value={fmtNum(data.dormant)}    sub="Loan accounts"                          accent={data.dormant > 0 ? 'amber' : 'green'} />
-        <KpiCard icon="💹" label="Total Sanction"        value={fmtCr(data.total_sanction)} sub="Portfolio value"                     accent="purple" />
+        <KpiCard icon={ICONS.clock} label="Dormant (No Txn >90d)" value={fmtNum(data.dormant)}    sub="Loan accounts"                          accent={data.dormant > 0 ? 'amber' : 'green'} />
+        <KpiCard icon={ICONS.barChart} label="Total Sanction"        value={fmtCr(data.total_sanction)} sub="Portfolio value"                     accent="purple" />
       </div>
 
       {data.new_in_period != null && (
@@ -1269,23 +1290,23 @@ function ProfitabilitySection({ data, warmingUp, loading, fys, selectedFy, onFyC
       )}
 
       <div className="kpi-bar">
-        <KpiCard icon="💰" label="Net Profit"
+        <KpiCard icon={ICONS.money} label="Net Profit"
                  value={fmtCr(pl.net_profit)}
                  sub={<>{!data.period.complete && <span style={{ color: '#b45309', fontWeight: 600 }}>⏳ in progress · </span>}<DeltaTag cur={pl.net_profit} prior={pl_prior.net_profit} /></>}
                  accent={pl.net_profit >= 0 ? 'green' : 'red'} />
-        <KpiCard icon="📊" label="Net Interest Income"
+        <KpiCard icon={ICONS.barChart} label="Net Interest Income"
                  value={fmtCr(pl.nii)}
                  sub={`${fmtCr(pl.interest_income)} / ${fmtCr(pl.interest_expense)}${!data.period.complete ? ' · in progress' : ''}`}
                  accent="blue" />
-        <KpiCard icon="💸" label="Cost of Funds"
+        <KpiCard icon={ICONS.dollarSign} label="Cost of Funds"
                  value={ratios.cost_of_funds_pct != null ? `${ratios.cost_of_funds_pct}%` : '—'}
                  sub={ratios.cost_of_funds_window ? `Trailing 4 completed qtrs: ${ratios.cost_of_funds_window}` : 'Needs 4 completed quarters'}
                  accent="purple" />
-        <KpiCard icon="⚠️" label="Gross NPA"
+        <KpiCard icon={ICONS.alertTriangle} label="Gross NPA"
                  value={npa.gross_pct != null ? `${npa.gross_pct}%` : '—'}
                  sub={`${fmtCr(npa.gross)} · ${fmtNum(npaAccounts)} accounts · as of today`}
                  accent={npaAccent} />
-        <KpiCard icon="🏦" label="CD Ratio"
+        <KpiCard icon={ICONS.bank} label="CD Ratio"
                  value={ratios.cd_ratio_pct != null ? `${ratios.cd_ratio_pct}%` : '—'}
                  sub={`${fmtCr(balances.deposits.total)} dep / ${fmtCr(balances.advances.total)} adv · as of today`}
                  accent={cdAccent} />
@@ -1393,11 +1414,11 @@ function SlrComplianceSection({ slr }) {
   return (
     <Panel title="SLR Compliance" className="mt-panel" badge={s.label} badgeVariant={s.badge}>
       <div className="kpi-bar" style={{ paddingTop: 0 }}>
-        <KpiCard icon="🛡️" label="SLR Ratio"
+        <KpiCard icon={ICONS.shield} label="SLR Ratio"
                  value={slr_pct != null ? `${slr_pct}%` : '—'}
                  sub={balances_ready ? 'SLR-eligible book ÷ NDTL' : 'Warming up…'}
                  accent={s.accent} />
-        <KpiCard icon="📏" label="Minimum Required"
+        <KpiCard icon={ICONS.ruler} label="Minimum Required"
                  value={`${minimum_pct}%`}
                  sub="RBI norm for UCBs"
                  accent="blue" />
@@ -1405,11 +1426,11 @@ function SlrComplianceSection({ slr }) {
                  value={headroom_pct != null ? `${headroom_pct > 0 ? '+' : ''}${headroom_pct}%` : '—'}
                  sub="Above / below minimum"
                  accent={s.accent} />
-        <KpiCard icon="🏦" label="SLR-Eligible Investments"
+        <KpiCard icon={ICONS.bank} label="SLR-Eligible Investments"
                  value={fmtCr(slr_eligible_book_value)}
                  sub="Govt securities & T-Bills"
                  accent="purple" />
-        <KpiCard icon="📒" label="NDTL (Deposits Proxy)"
+        <KpiCard icon={ICONS.book} label="NDTL (Deposits Proxy)"
                  value={ndtl != null ? fmtCr(ndtl) : '—'}
                  sub="Bank-wide closing deposits"
                  accent="cyan" />
@@ -1438,11 +1459,11 @@ function InvestmentsSection({ data, loading }) {
   return (
     <>
       <div className="kpi-bar">
-        <KpiCard icon="🏛️" label="Total Investment Book"
+        <KpiCard icon={ICONS.bank} label="Total Investment Book"
                  value={fmtCr(total_book_value)}
                  sub={`${fmtNum(holding_count)} holdings`}
                  accent="blue" />
-        <KpiCard icon="📄" label="Face Value"
+        <KpiCard icon={ICONS.fileText} label="Face Value"
                  value={fmtCr(total_face_value)}
                  sub="Aggregate face value"
                  accent="purple" />
@@ -1450,15 +1471,15 @@ function InvestmentsSection({ data, loading }) {
                  value={fmtCr(mtm_bucket_book_vs_face)}
                  sub="Marked-to-market bucket only"
                  accent={mtmAccent} />
-        <KpiCard icon="📦" label="HTM Book vs. Face"
+        <KpiCard icon={ICONS.package} label="HTM Book vs. Face"
                  value={fmtCr(htm_book_vs_face)}
                  sub="Amortized cost — not P&L"
                  accent="blue" />
-        <KpiCard icon="💹" label="Weighted Avg ROI"
+        <KpiCard icon={ICONS.barChart} label="Weighted Avg ROI"
                  value={`${weighted_avg_roi}%`}
                  sub="Across live holdings"
                  accent="cyan" />
-        <KpiCard icon="🎯" label="Weighted Avg YTM"
+        <KpiCard icon={ICONS.target} label="Weighted Avg YTM"
                  value={`${weighted_avg_ytm}%`}
                  sub="Yield to maturity"
                  accent="orange" />
@@ -1552,12 +1573,12 @@ function AlertsSection({ data, loading }) {
   return (
     <>
       <div className="kpi-bar">
-        <KpiCard icon="🚨" label="Critical"      value={summary.critical}  sub="Require immediate action" accent={summary.critical > 0 ? 'red' : 'green'} />
-        <KpiCard icon="⚠️" label="Warnings"      value={summary.warning}   sub="Monitor closely"          accent={summary.warning > 0 ? 'amber' : 'green'} />
-        <KpiCard icon="📊" label="NPA (Count)"   value={`${summary.npa_pct_count}%`}  sub="By account count"  accent={summary.npa_pct_count > 5 ? 'red' : summary.npa_pct_count > 3 ? 'amber' : 'green'} />
-        <KpiCard icon="💰" label="NPA (Amount)"  value={`${summary.npa_pct_amount}%`} sub="By sanction amount" accent={summary.npa_pct_amount > 5 ? 'red' : summary.npa_pct_amount > 3 ? 'amber' : 'green'} />
+        <KpiCard icon={ICONS.siren} label="Critical"      value={summary.critical}  sub="Require immediate action" accent={summary.critical > 0 ? 'red' : 'green'} />
+        <KpiCard icon={ICONS.alertTriangle} label="Warnings"      value={summary.warning}   sub="Monitor closely"          accent={summary.warning > 0 ? 'amber' : 'green'} />
+        <KpiCard icon={ICONS.barChart} label="NPA (Count)"   value={`${summary.npa_pct_count}%`}  sub="By account count"  accent={summary.npa_pct_count > 5 ? 'red' : summary.npa_pct_count > 3 ? 'amber' : 'green'} />
+        <KpiCard icon={ICONS.money} label="NPA (Amount)"  value={`${summary.npa_pct_amount}%`} sub="By sanction amount" accent={summary.npa_pct_amount > 5 ? 'red' : summary.npa_pct_amount > 3 ? 'amber' : 'green'} />
         {summary.cd_ratio != null && (
-          <KpiCard icon="📈" label="CD Ratio" value={`${summary.cd_ratio}%`} sub="Closing balances, as of today"
+          <KpiCard icon={ICONS.trendingUp} label="CD Ratio" value={`${summary.cd_ratio}%`} sub="Closing balances, as of today"
             accent={summary.cd_ratio > 75 ? 'red' : summary.cd_ratio < 60 ? 'amber' : 'green'} />
         )}
       </div>
@@ -1597,11 +1618,11 @@ function AlertsSection({ data, loading }) {
       {(summary.fd_maturing_7d > 0 || summary.fd_maturing_30d > 0) && (
         <Panel title="FD Maturity Watch" className="mt-panel" badge="Liquidity Risk" badgeVariant="amber">
           <div className="kpi-bar" style={{ paddingTop: 0, paddingBottom: 0 }}>
-            <KpiCard icon="📅" label="Maturing in 7 Days"
+            <KpiCard icon={ICONS.calendar} label="Maturing in 7 Days"
               value={fmtNum(summary.fd_maturing_7d)}
               sub={fmtCr(summary.fd_maturing_7d_amt) + ' at risk'}
               accent={summary.fd_maturing_7d > 0 ? 'red' : 'green'} />
-            <KpiCard icon="📅" label="Maturing in 30 Days"
+            <KpiCard icon={ICONS.calendar} label="Maturing in 30 Days"
               value={fmtNum(summary.fd_maturing_30d)}
               sub={fmtCr(summary.fd_maturing_30d_amt) + ' to manage'}
               accent={summary.fd_maturing_30d > 50 ? 'amber' : 'cyan'} />
