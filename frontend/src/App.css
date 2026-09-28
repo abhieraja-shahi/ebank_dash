@@ -256,8 +256,6 @@ body {
   line-height: 1.15;
   margin-bottom: 5px;
   font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .kpi-sub {
@@ -2063,3 +2061,43 @@ body {
   margin-left: auto;
   font-size: 12px;
 }
+
+
+/* ── General Ledger ───────────────────────────────────────────────────────── */
+.gl-list { display: flex; flex-direction: column; }
+.gl-group { border-bottom: 1px solid var(--border-sub); }
+.gl-group:last-child { border-bottom: none; }
+.gl-group-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 4px; background: none; border: none; text-align: left;
+  font: inherit; font-weight: 600; color: var(--text); cursor: pointer;
+}
+.gl-group-head:hover:not(.gl-static) { background: var(--bg-inset); }
+.gl-group-head.gl-static { cursor: default; }
+.gl-chevron { width: 12px; color: var(--text-muted); font-size: 11px; transition: transform 0.15s; }
+.gl-chevron.is-open { transform: rotate(90deg); }
+.gl-group-name { flex: 1; min-width: 0; }
+.gl-group-count { font-size: 11px; font-weight: 500; color: var(--text-muted); }
+.gl-amt { font-variant-numeric: tabular-nums; text-align: right; min-width: 130px; }
+.gl-account {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 5px 4px 5px 24px; font-size: 12.5px; color: var(--text-sub);
+}
+.gl-account:nth-child(even) { background: var(--bg-inset); }
+.gl-code { font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 11.5px; min-width: 76px; }
+.gl-desc { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.gl-empty { padding: 24px 12px; text-align: center; color: var(--text-muted); }
+.gl-search {
+  min-width: 260px; padding: 6px 10px; font: inherit; font-size: 13px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-card); color: var(--text);
+}
+.gl-search:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 2px rgba(29,78,216,0.12); }
+.gl-refreshing { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+
+/* ─── Single-line figures (see FitText in App.jsx) ─────── */
+.fit-text { white-space: nowrap; overflow: hidden; display: block; max-width: 100%; }
+.kpi-value { font-size: 26px; }
+.loan-kpi { min-width: 0; }
+.maturity-chip-amt, .maturity-chip-count, .period-strip-val, .period-strip-amt,
+.alert-value, .gl-amt, .type-count, .acct-status-total-num, .acct-status-pill-count,
+.acct-status-row-num { white-space: nowrap; }

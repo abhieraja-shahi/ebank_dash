@@ -8,7 +8,6 @@ __pycache__/
 *.pyo
 .venv/
 .uv/
-uv.lock
 
 # Node
 node_modules/

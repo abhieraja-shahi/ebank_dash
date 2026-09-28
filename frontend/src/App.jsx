@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ReferenceDot,
@@ -100,7 +100,7 @@ const NAV_MAIN = [
   { id: 'alerts',   label: 'Alerts',              icon: ICONS.alerts,       active: true  },
   { id: null,       label: 'Borrowings',          icon: ICONS.borrowings,   active: false },
   { id: null,       label: 'Letter of Credit',    icon: ICONS.lc,           active: false },
-  { id: null,       label: 'General Ledger',      icon: ICONS.gl,           active: false },
+  { id: 'gl',       label: 'General Ledger',      icon: ICONS.gl,           active: true  },
   { id: null,       label: 'Reports',             icon: ICONS.reports,      active: false },
 ]
 
@@ -114,6 +114,11 @@ function Sidebar({ section, setSection, branches, filters, setFilters, onApply, 
   const [draft, setDraft] = useState(filters)
 
   useEffect(() => { setDraft(filters) }, [filters])
+
+  // HO (90) is selectable on the GL tab only; drop it from the draft elsewhere.
+  useEffect(() => {
+    if (section !== 'gl') setDraft(d => (d.branch === '90' ? { ...d, branch: '' } : d))
+  }, [section])
 
   function apply() {
     setFilters(draft)
@@ -166,7 +171,7 @@ function Sidebar({ section, setSection, branches, filters, setFilters, onApply, 
             setDraft(d => ({ ...d, branch: newBranch }))
           }}>
             <option value="">All Branches</option>
-            {branches.filter(b => b.code !== '90').map(b => (
+            {branches.filter(b => b.code !== '90' || section === 'gl').map(b => (
               <option key={b.code} value={b.code}>{b.name}</option>
             ))}
           </select>
@@ -201,6 +206,7 @@ const SECTION_TITLES = {
   profitability: 'Profitability',
   alerts:   'Alerts & Exceptions',
   investments: 'Investments',
+  gl:       'General Ledger',
 }
 
 function JobsStatusPill({ jobsStatus }) {
@@ -295,6 +301,34 @@ function Spinner() {
   return <div className="spinner-wrap"><div className="spinner" /></div>
 }
 
+// Single-line figure that shrinks its font (down to `min` px) so it never wraps or overflows its box.
+function FitText({ as: Tag = 'div', className, style, min = 9, children }) {
+  const ref = useRef(null)
+  const fit = useCallback(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.fontSize = ''
+    const avail = el.clientWidth
+    const need = el.scrollWidth
+    if (avail > 0 && need > avail) {
+      const base = parseFloat(getComputedStyle(el).fontSize)
+      el.style.fontSize = `${Math.max(min, Math.floor(base * (avail / need) * 10) / 10)}px`
+    }
+  }, [min])
+  useLayoutEffect(() => { fit() }, [fit, children])
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    let w = el.clientWidth
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth !== w) { w = el.clientWidth; fit() }
+    })
+    ro.observe(el.parentElement || el)
+    return () => ro.disconnect()
+  }, [fit])
+  return <Tag ref={ref} className={`fit-text ${className || ''}`} style={style}>{children}</Tag>
+}
+
 function KpiCard({ icon, label, value, sub, accent = 'blue' }) {
   const a = KPI_ACCENT[accent] || KPI_ACCENT.blue
   return (
@@ -302,8 +336,8 @@ function KpiCard({ icon, label, value, sub, accent = 'blue' }) {
       <div className="kpi-icon-wrap">{icon}</div>
       <div className="kpi-body">
         <div className="kpi-label">{label}</div>
-        <div className="kpi-value">{value ?? '—'}</div>
-        {sub && <div className="kpi-sub">{sub}</div>}
+        <FitText className="kpi-value" min={12}>{value ?? '—'}</FitText>
+        {sub && <FitText className="kpi-sub" min={9}>{sub}</FitText>}
       </div>
     </div>
   )
@@ -567,15 +601,15 @@ function OverviewSection({ accounts, kyc, loans, alertsSummary, investments, loa
               </div>
               <div className="kyc-stats">
                 <div className="kyc-stat-box">
-                  <div className="kyc-stat-val" style={{ color: C.green }}>{fmtNum(kyc.verified)}</div>
+                  <FitText className="kyc-stat-val" style={{ color: C.green }} min={10}>{fmtNum(kyc.verified)}</FitText>
                   <div className="kyc-stat-lbl">Verified</div>
                 </div>
                 <div className="kyc-stat-box">
-                  <div className="kyc-stat-val" style={{ color: C.amber }}>{fmtNum(kyc.awaiting_verification)}</div>
+                  <FitText className="kyc-stat-val" style={{ color: C.amber }} min={10}>{fmtNum(kyc.awaiting_verification)}</FitText>
                   <div className="kyc-stat-lbl">Awaiting Verification</div>
                 </div>
                 <div className="kyc-stat-box">
-                  <div className="kyc-stat-val" style={{ color: C.red }}>{fmtNum(kyc.no_kyc_record)}</div>
+                  <FitText className="kyc-stat-val" style={{ color: C.red }} min={10}>{fmtNum(kyc.no_kyc_record)}</FitText>
                   <div className="kyc-stat-lbl">No KYC Record</div>
                 </div>
               </div>
@@ -590,11 +624,11 @@ function OverviewSection({ accounts, kyc, loans, alertsSummary, investments, loa
           {loading || !loans ? <Spinner /> : (
             <>
               <div className="loan-summary">
-                <div className="loan-kpi"><span className="lkpi-val">{fmtNum(loans.total)}</span><span className="lkpi-lbl">Total Loans</span></div>
-                <div className="loan-kpi"><span className="lkpi-val" style={{ color: C.green }}>{fmtNum(loans.standard)}</span><span className="lkpi-lbl">Standard</span></div>
-                <div className="loan-kpi"><span className="lkpi-val" style={{ color: C.red }}>{npaReady ? fmtNum(loans.npa_count) : '—'}</span><span className="lkpi-lbl">Stressed</span></div>
-                <div className="loan-kpi"><span className="lkpi-val">{fmtCr(loans.total_sanction)}</span><span className="lkpi-lbl">Total Sanction</span></div>
-                <div className="loan-kpi"><span className="lkpi-val" style={{ color: C.red }}>{npaReady ? fmtCr(loans.npa_sanction) : '—'}</span><span className="lkpi-lbl">NPA Exposure</span></div>
+                <div className="loan-kpi"><FitText as="span" className="lkpi-val" min={11}>{fmtNum(loans.total)}</FitText><span className="lkpi-lbl">Total Loans</span></div>
+                <div className="loan-kpi"><FitText as="span" className="lkpi-val" style={{ color: C.green }} min={11}>{fmtNum(loans.standard)}</FitText><span className="lkpi-lbl">Standard</span></div>
+                <div className="loan-kpi"><FitText as="span" className="lkpi-val" style={{ color: C.red }} min={11}>{npaReady ? fmtNum(loans.npa_count) : '—'}</FitText><span className="lkpi-lbl">Stressed</span></div>
+                <div className="loan-kpi"><FitText as="span" className="lkpi-val" min={11}>{fmtCr(loans.total_sanction)}</FitText><span className="lkpi-lbl">Total Sanction</span></div>
+                <div className="loan-kpi"><FitText as="span" className="lkpi-val" style={{ color: C.red }} min={11}>{npaReady ? fmtCr(loans.npa_sanction) : '—'}</FitText><span className="lkpi-lbl">NPA Exposure</span></div>
               </div>
               <div style={{ height: 200 }}>
                 <ResponsiveContainer width="100%" height="100%">
@@ -1766,6 +1800,127 @@ function AlertsSection({ data, loading }) {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
+// ─── Section: General Ledger ──────────────────────────────────────────────────
+
+const fmtRs = n => n == null ? '—'
+  : Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+// Signed crore formatter for the KPI tiles (fmtCr doesn't handle negatives).
+function fmtCrSigned(n) {
+  if (n == null) return '—'
+  return `${n < 0 ? '-' : ''}${fmtCr(Math.abs(n))}`
+}
+
+function GLGroupList({ groups, query, extraRow }) {
+  const [open, setOpen] = useState({})
+  const q = query.trim().toLowerCase()
+
+  const visible = groups
+    .map(g => {
+      if (!q) return g
+      const groupHit = g.group_name.toLowerCase().includes(q)
+      const accounts = groupHit ? g.accounts
+        : g.accounts.filter(a => a.description?.toLowerCase().includes(q) || a.code.includes(q))
+      return accounts.length ? { ...g, accounts } : null
+    })
+    .filter(Boolean)
+
+  if (!visible.length && !extraRow) return <div className="gl-empty">No matching ledger heads.</div>
+
+  return (
+    <div className="gl-list">
+      {visible.map(g => {
+        const isOpen = q ? true : !!open[g.group_code]
+        return (
+          <div key={g.group_code} className="gl-group">
+            <button className="gl-group-head" onClick={() => setOpen(o => ({ ...o, [g.group_code]: !o[g.group_code] }))}>
+              <span className={`gl-chevron ${isOpen ? 'is-open' : ''}`}>▸</span>
+              <span className="gl-group-name">{g.group_name}</span>
+              <span className="gl-group-count">{g.accounts.length}</span>
+              <span className="gl-amt">{fmtRs(g.total)}</span>
+            </button>
+            {isOpen && g.accounts.map(a => (
+              <div key={a.code + a.description} className="gl-account">
+                <span className="gl-code">{a.code}</span>
+                <span className="gl-desc">{a.description}</span>
+                <span className="gl-amt">{fmtRs(a.amount)}</span>
+              </div>
+            ))}
+          </div>
+        )
+      })}
+      {extraRow}
+    </div>
+  )
+}
+
+function GLSection({ data, loading, error, branchName }) {
+  const [query, setQuery] = useState('')
+  if (error && !data) return <div className="error-banner">{error}</div>
+  if (loading && !data) {
+    return (
+      <Panel title="General Ledger">
+        <div style={{ padding: '32px 16px', textAlign: 'center', color: '#64748b' }}>
+          <Spinner />
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Building the ledger…</div>
+          <div>This scans every ledger table for the as-on date, so the first load can take up to half a minute.</div>
+        </div>
+      </Panel>
+    )
+  }
+  if (!data) return null
+
+  const { liabilities, assets, total_liabilities, total_assets, profit, difference } = data
+  const balanced = Math.abs(difference) < 1
+
+  const profitRow = profit !== 0 && (
+    <div className="gl-group">
+      <div className="gl-group-head gl-static">
+        <span className="gl-chevron" />
+        <span className="gl-group-name">{profit >= 0 ? 'Current Year Profit' : 'Current Year Loss'} (P&amp;L, FY from {fmtDate(data.fy_start)})</span>
+        <span className="gl-amt">{fmtRs(profit)}</span>
+      </div>
+    </div>
+  )
+
+  return (
+    <>
+      {error && <div className="error-banner" style={{ marginBottom: 12 }}>{error}</div>}
+      {loading && <div className="gl-refreshing">Refreshing…</div>}
+      <div className="kpi-bar">
+        <KpiCard icon={ICONS.bank} label="Total Liabilities" value={fmtCrSigned(total_liabilities)}
+                 sub={`${liabilities.length} groups`} accent="blue" />
+        <KpiCard icon={ICONS.money} label="Current Year P&L" value={fmtCrSigned(profit)}
+                 sub={`FY from ${fmtDate(data.fy_start)}`} accent={profit >= 0 ? 'green' : 'red'} />
+        <KpiCard icon={ICONS.barChart} label="Total Assets" value={fmtCrSigned(total_assets)}
+                 sub={`${assets.length} groups`} accent="purple" />
+        <KpiCard icon={ICONS.alertTriangle} label="Balance Check"
+                 value={balanced ? 'Balanced' : fmtRs(difference)}
+                 sub={balanced ? 'Liabilities + P&L = Assets'
+                               : data.branch ? 'Inter-branch / unposted difference' : 'Liabilities + P&L − Assets'}
+                 accent={balanced ? 'green' : data.branch ? 'amber' : 'red'} />
+      </div>
+
+      <div className="panel-toolbar" style={{ margin: '12px 0', flexWrap: 'wrap', rowGap: 8 }}>
+        <input className="gl-search" type="search" placeholder="Search ledger head or code…"
+               value={query} onChange={e => setQuery(e.target.value)} />
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#94a3b8' }}>
+          {branchName} · as on {fmtDate(data.as_on)}
+        </span>
+      </div>
+
+      <div className="two-col-grid">
+        <Panel title="Liabilities & Capital" badge={fmtRs(total_liabilities + profit)} className="mt-panel">
+          <GLGroupList groups={liabilities} query={query} extraRow={!query && profitRow} />
+        </Panel>
+        <Panel title="Assets" badge={fmtRs(total_assets)} badgeVariant="green" className="mt-panel">
+          <GLGroupList groups={assets} query={query} />
+        </Panel>
+      </div>
+    </>
+  )
+}
+
 const DEFAULT_FILTERS = {
   branch:   '',
   fromDate: '',
@@ -1817,6 +1972,9 @@ function Dashboard({ user, onLogout, bankInfo }) {
   const [profFys, setProfFys] = useState([])
   const [profWarmingUp, setProfWarmingUp] = useState(false)
   const [investments, setInvestments] = useState(null)
+  const [glData, setGlData] = useState(null)
+  const [glLoading, setGlLoading] = useState(false)
+  const [glError, setGlError] = useState(null)
   const [jobsStatus, setJobsStatus] = useState(null)
 
   const [loading,   setLoading]   = useState(true)
@@ -1844,19 +2002,18 @@ function Dashboard({ user, onLogout, bankInfo }) {
     const aq = alertParams.toString() ? `?${alertParams.toString()}` : ''
 
     try {
-      const [aRes, kRes, lRes, dRes, advRes, alRes] = await Promise.all([
+      const [aRes, kRes, advRes, dRes, alRes] = await Promise.all([
         fetch(`${API}/api/metrics/accounts${q}`),
         fetch(`${API}/api/metrics/kyc${q}`),
         fetch(`${API}/api/metrics/advances${q}`),
         fetch(`${API}/api/metrics/deposits${q}`),
-        fetch(`${API}/api/metrics/advances${q}`),
         fetch(`${API}/api/alerts${aq}`),
       ])
       if (!aRes.ok) throw new Error('API error')
-      const [a, k, l, d, adv, al] = await Promise.all([
-        aRes.json(), kRes.json(), lRes.json(), dRes.json(), advRes.json(), alRes.json(),
+      const [a, k, adv, d, al] = await Promise.all([
+        aRes.json(), kRes.json(), advRes.json(), dRes.json(), alRes.json(),
       ])
-      setAccounts(a); setKyc(k); setLoans(l); setDeposits(d); setAdvances(adv); setAlertsData(al)
+      setAccounts(a); setKyc(k); setLoans(adv); setDeposits(d); setAdvances(adv); setAlertsData(al)
       setUpdatedAt(new Date())
     } catch {
       setError('Unable to reach the API. Ensure the backend is running on port 8000.')
@@ -1922,6 +2079,29 @@ function Dashboard({ user, onLogout, bankInfo }) {
     return () => clearInterval(id)
   }, [fetchInvestments])
 
+  // The GL scan is heavy (up to ~30s cold), so it loads only while the GL tab
+  // is open, and re-runs when the branch or as-on date changes — no polling.
+  const fetchGl = useCallback(async () => {
+    const params = new URLSearchParams()
+    if (filters.branch) params.set('branch', filters.branch)
+    if (filters.toDate) params.set('as_on', filters.toDate)
+    setGlLoading(true)
+    setGlError(null)
+    try {
+      const res = await fetch(`${API}/api/metrics/gl?${params.toString()}`)
+      if (!res.ok) throw new Error('API error')
+      setGlData(await res.json())
+    } catch {
+      setGlError('Unable to load the General Ledger. Check that the backend is running and try refreshing.')
+    } finally {
+      setGlLoading(false)
+    }
+  }, [filters.branch, filters.toDate])
+
+  useEffect(() => {
+    if (section === 'gl') fetchGl()
+  }, [section, fetchGl])
+
   // Polls fast (5s) while any startup job is still loading — figures that
   // depend on it read as "—" until then, see JobsStatusPill — then backs off
   // to a slow heartbeat once everything's ready.
@@ -1940,6 +2120,15 @@ function Dashboard({ user, onLogout, bankInfo }) {
     poll()
     return () => { cancelled = true; clearTimeout(timer) }
   }, [jobsStatus?.ready])
+
+  // Leaving the GL tab with HO (90) applied would leak it into other sections.
+  useEffect(() => {
+    if (section !== 'gl' && filters.branch === '90') {
+      const reset = { ...filters, branch: '' }
+      setFilters(reset)
+      fetchAll(reset)
+    }
+  }, [section, filters, fetchAll])
 
   function handleApply(newFilters) {
     setFilters(newFilters)
@@ -1968,7 +2157,7 @@ function Dashboard({ user, onLogout, bankInfo }) {
           filters={filters}
           branches={branches}
           fetching={fetching}
-          onRefresh={() => { fetchAll(filters); fetchProfitability(); fetchInvestments() }}
+          onRefresh={() => { fetchAll(filters); fetchProfitability(); fetchInvestments(); if (section === 'gl') fetchGl() }}
           updatedAt={updatedAt}
           user={user}
           onLogout={onLogout}
@@ -1994,6 +2183,10 @@ function Dashboard({ user, onLogout, bankInfo }) {
           )}
           {section === 'alerts'    && <AlertsSection    data={alertsData} loading={loading} />}
           {section === 'investments' && <InvestmentsSection data={investments} loading={loading} />}
+          {section === 'gl' && (
+            <GLSection data={glData} loading={glLoading} error={glError}
+                       branchName={filters.branch ? (branches.find(b => b.code === filters.branch)?.name || filters.branch) : 'All Branches'} />
+          )}
         </main>
       </div>
     </div>

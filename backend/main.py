@@ -76,6 +76,7 @@ LEVEL_NAMES = {
 _static_cache  = TTLCache(maxsize=16,  ttl=3600)   # branches, bank-info  — 1 hr
 _metrics_cache = TTLCache(maxsize=128, ttl=300)    # accounts/deposits/advances/kyc — 5 min
 _alerts_cache  = TTLCache(maxsize=32,  ttl=120)    # alerts — 2 min
+_kyc_lock      = asyncio.Lock()                    # one cold KYC query at a time
 
 
 # ── Startup / shutdown ────────────────────────────────────────────────────────
@@ -148,7 +149,7 @@ BALANCES: dict = {}   # branch -> {sb, rd, tl, dl, fd, ca_credit, ca_debit, depo
 NPA: dict      = {}   # branch -> {11: {accounts, amount}, 12: {...}, 13: {...}}
 
 NPA_CLASS_LABELS = {11: "sub_standard", 12: "doubtful", 13: "loss"}
-KNOWN_ACCT_NATURES = {"SB", "RD", "TL", "DL", "CA", "FD", "PO"}
+KNOWN_ACCT_NATURES = {"SB", "RD", "TL", "DL", "CA", "FD", "PO", "DS"}
 
 # Branch code 90 = Head Office / Administrative Office — same code on every bank
 # deployment (per branchmaster). It's not a real branch: deposit/loan business
@@ -337,7 +338,7 @@ BAL_FD_SQL = """
 
 
 def _empty_branch_bal() -> dict:
-    return {"sb": 0.0, "rd": 0.0, "tl": 0.0, "dl": 0.0, "fd": 0.0, "ca_credit": 0.0, "ca_debit": 0.0}
+    return {"sb": 0.0, "rd": 0.0, "ds": 0.0, "tl": 0.0, "dl": 0.0, "fd": 0.0, "ca_credit": 0.0, "ca_debit": 0.0}
 
 
 async def _job_balances():
@@ -356,6 +357,7 @@ async def _job_balances():
                 b = bal.setdefault(r["branch"], _empty_branch_bal())
                 if r["nature"] == "SB": b["sb"] += v
                 elif r["nature"] == "RD": b["rd"] += v
+                elif r["nature"] == "DS": b["ds"] += v
                 elif r["nature"] == "TL": b["tl"] += v
                 elif r["nature"] == "DL": b["dl"] += v
 
@@ -371,7 +373,7 @@ async def _job_balances():
                 b["fd"] = float(r["bal"] or 0)
 
     for b in bal.values():
-        b["deposits"] = b["sb"] + b["rd"] + b["fd"] + b["ca_credit"]
+        b["deposits"] = b["sb"] + b["rd"] + b["ds"] + b["fd"] + b["ca_credit"]
         b["advances"] = -(b["tl"] + b["dl"]) + abs(b["ca_debit"])
 
     BALANCES = bal
@@ -493,16 +495,16 @@ def _trend_series(branch_filter: Optional[str]) -> list:
 def _agg_balances(branch_filter: Optional[str]) -> tuple[dict, dict]:
     if branch_filter:
         b = BALANCES.get(branch_filter, _empty_branch_bal())
-        deposits = {"sb": b["sb"], "rd": b["rd"], "fd": b["fd"], "ca": b["ca_credit"],
+        deposits = {"sb": b["sb"], "rd": b["rd"], "ds": b["ds"], "fd": b["fd"], "ca": b["ca_credit"],
                     "total": b.get("deposits", 0.0)}
         advances = {"tl": -b["tl"], "dl": -b["dl"], "cc_od": abs(b["ca_debit"]),
                     "total": b.get("advances", 0.0)}
         return deposits, advances
 
-    deposits = {"sb": 0.0, "rd": 0.0, "fd": 0.0, "ca": 0.0, "total": 0.0}
+    deposits = {"sb": 0.0, "rd": 0.0, "ds": 0.0, "fd": 0.0, "ca": 0.0, "total": 0.0}
     advances = {"tl": 0.0, "dl": 0.0, "cc_od": 0.0, "total": 0.0}
     for b in BALANCES.values():
-        deposits["sb"] += b["sb"]; deposits["rd"] += b["rd"]; deposits["fd"] += b["fd"]
+        deposits["sb"] += b["sb"]; deposits["rd"] += b["rd"]; deposits["ds"] += b["ds"]; deposits["fd"] += b["fd"]
         deposits["ca"] += b["ca_credit"]; deposits["total"] += b.get("deposits", 0.0)
         advances["tl"] += -b["tl"]; advances["dl"] += -b["dl"]
         advances["cc_od"] += abs(b["ca_debit"]); advances["total"] += b.get("advances", 0.0)
@@ -1723,6 +1725,193 @@ async def get_investments():
     return result
 
 
+# ── General Ledger ────────────────────────────────────────────────────────────
+#
+# Ported from the DBConnect.ipynb notebook (the reference GL/P&L queries).
+# Balance sheet = glbmast joined to per-account-type balances taken from every
+# ledger table (gl_recon, recon, loan_recon, ..., cashinhand). Which side (L/A)
+# a balance lands on is decided by the sign of its net cramt-dramt, not by
+# glbmast's own GlbActype. P&L = gl_recon heads 302500-499999 for the financial
+# year to date, so Liabilities + P&L profit == Assets when the books balance.
+#
+# The ledger tables are large (gl_recon alone ~10M rows), so the scan takes
+# ~15-30s. Instead of re-running it per branch, each arm is aggregated once per
+# as-on date at (branch, key) grain and cached; the notebook's sign/side/join
+# logic then runs in Python for whichever branch (or all) is requested.
+
+_gl_raw_cache = TTLCache(maxsize=4, ttl=600)
+_gl_inflight: dict = {}
+
+GL_CASH_KEY = "06200500"
+# Groups with no SubGroupCode=0 header row in glbmast; used before the "Group N" fallback.
+GL_GROUP_NAME_FALLBACK = {50: "CASH IN HAND"}
+
+def _gl_arm_queries(report_date: str, fin_year_start: str) -> dict:
+    """arm name -> SQL returning (brn, k, amt[, fy_amt]) at branch/key grain."""
+    def simple(src: str, extra: str = "") -> str:
+        return (f"SELECT SUBSTRING(acno,1,2) brn, SUBSTRING(acno,3,2) k, SUM(cramt-dramt) amt "
+                f"FROM {src} WHERE dt<='{report_date}' AND auth='Y'{extra} GROUP BY 1,2")
+    def ca(sign: int) -> str:
+        return (f"SELECT SUBSTRING(acno,1,2) brn, SUBSTRING(acno,3,2) k, SUM(cramt-dramt) amt "
+                f"FROM ca_recon WHERE acno IN (SELECT acno FROM ca_recon WHERE dt<='{report_date}' "
+                f"GROUP BY acno HAVING SIGN(IFNULL(SUM(IFNULL(cramt,0)),0) - IFNULL(SUM(IFNULL(dramt,0)),0)) = {sign}) "
+                f"AND dt<='{report_date}' AND auth='Y' GROUP BY 1,2")
+    return {
+        # fy_amt carries the P&L (financial-year-to-date) movement from the same scan.
+        "gl": (f"SELECT SUBSTRING(acno,1,2) brn, SUBSTRING(acno,3,8) k, SUM(cramt-dramt) amt, "
+               f"SUM(IF(dt>='{fin_year_start}', cramt-dramt, 0)) fy_amt "
+               f"FROM gl_recon WHERE dt<='{report_date}' AND auth='Y' AND SUBSTRING(acno,3,8) <> '{GL_CASH_KEY}' "
+               f"GROUP BY 1,2"),
+        "recon": simple("recon"), "loan": simple("loan_recon"), "of": simple("of_recon"),
+        "rd": simple("rdrecon"), "dds": simple("ddstransaction"),
+        "td": simple("td_recon", " AND closeflag IS NULL"),
+        "ca_pos": ca(1), "ca_neg": ca(-1),
+        # Latest cash balance on or before the date, per branch — cashinhand has no
+        # row for days with no cash entry, and an exact-date match would drop cash to 0.
+        "cash": (f"SELECT c.brncode brn, '{GL_CASH_KEY}' k, SUM(c.amt)*-1 amt FROM cashinhand c "
+                 f"JOIN (SELECT brncode, MAX(ldate) ml FROM cashinhand WHERE ldate<='{report_date}' "
+                 f"GROUP BY brncode) m ON c.brncode=m.brncode AND c.ldate=m.ml GROUP BY c.brncode"),
+    }
+
+
+async def _gl_load_raw(report_date: str, fin_year_start: str) -> dict:
+    queries = _gl_arm_queries(report_date, fin_year_start)
+
+    async def run(sql: str) -> list:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql)
+                return await cur.fetchall()
+
+    names = list(queries)
+    results = await asyncio.gather(*(run(queries[n]) for n in names))
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT AcType, Code, Description, GlbActype, GroupCode, SubGroupCode "
+                              "FROM glbmast WHERE Code <> '00000000'")
+            master = await cur.fetchall()
+            await cur.execute("SELECT GroupCode, MIN(Description) AS name FROM glbmast "
+                              "WHERE SubGroupCode = 0 GROUP BY GroupCode")
+            group_names = {r["GroupCode"]: r["name"] for r in await cur.fetchall()}
+    return {"arms": dict(zip(names, results)), "master": master, "group_names": group_names}
+
+
+async def _gl_raw(report_date: str, fin_year_start: str) -> dict:
+    if report_date in _gl_raw_cache:
+        return _gl_raw_cache[report_date]
+    # Share one in-flight load between concurrent requests for the same date.
+    task = _gl_inflight.get(report_date)
+    if task is None:
+        task = asyncio.ensure_future(_gl_load_raw(report_date, fin_year_start))
+        _gl_inflight[report_date] = task
+    try:
+        raw = await task
+    finally:
+        if _gl_inflight.get(report_date) is task:
+            del _gl_inflight[report_date]
+    _gl_raw_cache[report_date] = raw
+    return raw
+
+
+def _gl_compute(raw: dict, branch: Optional[str]) -> dict:
+    def in_scope(r) -> bool:
+        return branch is None or r["brn"] == branch
+
+    # Net balance per (key, side) — each arm's side is the sign of its own net.
+    balances: dict = {}
+    for arm, rows in raw["arms"].items():
+        if arm == "cash":
+            for r in rows:
+                if in_scope(r):
+                    k = (r["k"], "A")
+                    balances[k] = balances.get(k, 0.0) + float(r["amt"] or 0)
+            continue
+        per_key: dict = {}
+        for r in rows:
+            if in_scope(r):
+                per_key[r["k"]] = per_key.get(r["k"], 0.0) + float(r["amt"] or 0)
+        for key, amt in per_key.items():
+            k = (key, "A" if amt < 0 else "L")
+            balances[k] = balances.get(k, 0.0) + amt
+
+    by_key: dict = {}
+    for (key, side), amt in balances.items():
+        by_key.setdefault(key, []).append((side, amt))
+
+    groups = {"L": {}, "A": {}}
+    for g in raw["master"]:
+        code, actype = g["Code"], g["AcType"] or ""
+        matches = list(by_key.get(code, []))
+        if actype and actype != code:
+            matches += by_key.get(actype, [])
+        # A glbmast row can match several keys; sum per side before dropping zeros.
+        per_side: dict = {}
+        for side, amt in matches:
+            # glbmast rows with an AcType only take balances of their own side.
+            if actype and g["GlbActype"] != side:
+                continue
+            per_side[side] = per_side.get(side, 0.0) + amt
+        for side, amt in per_side.items():
+            if amt == 0:
+                continue
+            shown = amt if side == "L" else -amt   # assets are cr-dr negative
+            grp = groups[side].setdefault(g["GroupCode"], {
+                "group_code": g["GroupCode"],
+                "group_name": raw["group_names"].get(g["GroupCode"]) or GL_GROUP_NAME_FALLBACK.get(g["GroupCode"]) or f"Group {g['GroupCode']}",
+                "total": 0.0, "accounts": [],
+            })
+            grp["total"] += shown
+            grp["accounts"].append({"code": code, "description": g["Description"], "amount": shown})
+
+    def finish(side: str) -> list:
+        out = sorted(groups[side].values(), key=lambda x: x["group_code"])
+        for grp in out:
+            grp["accounts"].sort(key=lambda a: a["code"])
+        return out
+
+    # P&L heads: SUBSTRING(acno,5,6) between 302500 and 499999 == key[2:8].
+    profit = sum(
+        float(r["fy_amt"] or 0) for r in raw["arms"]["gl"]
+        if in_scope(r) and "302500" <= r["k"][2:8] <= "499999"
+    )
+    liabilities, assets = finish("L"), finish("A")
+    total_liab = sum(x["total"] for x in liabilities)
+    total_assets = sum(x["total"] for x in assets)
+    return {
+        "liabilities": liabilities,
+        "assets": assets,
+        "total_liabilities": total_liab,
+        "total_assets": total_assets,
+        "profit": profit,                                  # credit-positive: >0 profit, <0 loss
+        "difference": total_liab + profit - total_assets,  # 0 when the books balance
+    }
+
+
+@app.get("/api/metrics/gl")
+async def get_gl(
+    branch: Optional[str] = Query(None),
+    as_on: Optional[str] = Query(None),
+):
+    if branch and not re.fullmatch(r"\d{2}", branch):
+        raise HTTPException(status_code=400, detail="Invalid branch")
+    if as_on:
+        try:
+            as_on_d = datetime.strptime(as_on, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="as_on must be YYYY-MM-DD")
+    else:
+        as_on_d = date.today()
+
+    fy_year = as_on_d.year if as_on_d.month >= 4 else as_on_d.year - 1
+    raw = await _gl_raw(as_on_d.strftime("%Y%m%d"), f"{fy_year}0401")
+    return {
+        "as_on":    as_on_d.isoformat(),
+        "branch":   branch,
+        "fy_start": f"{fy_year}-04-01",
+        **_gl_compute(raw, branch),
+    }
+
+
 # ── KYC ───────────────────────────────────────────────────────────────────────
 
 @app.get("/api/metrics/kyc")
@@ -1740,42 +1929,50 @@ async def get_kyc(branch: Optional[str] = Query(None)):
     # instead of being silently invisible like the old COUNT(*)-on-the-log
     # version. Branch is attributed via the customer's account(s), since
     # cbs_customer_master_detail itself carries no branch code.
-    branch_frag, branch_params = ("", [])
+    # Every join below is on a primary key (TxnId / customerid). The previous
+    # single-statement LEFT JOIN version let MySQL pair customers with the grouped
+    # KYC log with no join condition (~281k x 428k comparisons) and never finished,
+    # stacking up queries until the connection pool was exhausted. Customers with
+    # no submission are derived by subtraction instead of a LEFT JOIN.
+    # Branch = customers holding at least one account there; the derived table is
+    # DISTINCT so a multi-account customer is counted once.
+    branch_join, branch_params = ("", [])
     if branch:
-        branch_frag = "AND am.CurBrCode = %s"
+        branch_join = ("JOIN (SELECT DISTINCT custid1 FROM accountmaster WHERE CurBrCode = %s) b "
+                       "ON b.custid1 = c.customerid")
         branch_params = [branch]
 
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(f"""
-                SELECT
-                    COUNT(*) AS total,
-                    SUM(CASE WHEN lk.KycVerifiedBy IS NOT NULL THEN 1 ELSE 0 END) AS verified,
-                    SUM(CASE WHEN lk.CustomerId IS NOT NULL AND lk.KycVerifiedBy IS NULL THEN 1 ELSE 0 END) AS awaiting_verification,
-                    SUM(CASE WHEN lk.CustomerId IS NULL THEN 1 ELSE 0 END) AS no_kyc_record
-                FROM cbs_customer_master_detail c
-                LEFT JOIN (
-                    SELECT DISTINCT custid1 AS CustomerId, CurBrCode
-                    FROM accountmaster
-                    WHERE custid1 IS NOT NULL
-                ) am ON am.CustomerId = c.customerid
-                LEFT JOIN (
-                    SELECT k.CustomerId, k.KycVerifiedBy
-                    FROM cbs_cust_kyc_details k
-                    INNER JOIN (
-                        SELECT CustomerId, MAX(TxnId) AS max_txn
-                        FROM cbs_cust_kyc_details
-                        GROUP BY CustomerId
-                    ) mx ON mx.CustomerId = k.CustomerId AND mx.max_txn = k.TxnId
-                ) lk ON lk.CustomerId = c.customerid
-                WHERE c.SuspensionFlg NOT IN ('Y', 'S') {branch_frag}
-            """, branch_params)
-            row = await cur.fetchone()
+    # Serialise cold-cache computations so a burst of identical requests (every
+    # page load fires one) shares a single query instead of each running its own.
+    async with _kyc_lock:
+        if key in _metrics_cache:
+            return _metrics_cache[key]
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(f"""
+                    SELECT COUNT(*) AS total
+                    FROM cbs_customer_master_detail c {branch_join}
+                    WHERE c.SuspensionFlg NOT IN ('Y', 'S')
+                """, branch_params)
+                total_row = await cur.fetchone()
 
-    total                 = row["total"] or 0
-    verified              = int(row["verified"] or 0)
-    awaiting_verification = int(row["awaiting_verification"] or 0)
-    no_kyc_record         = int(row["no_kyc_record"] or 0)
+                await cur.execute(f"""
+                    SELECT COUNT(*) AS has_kyc,
+                           COALESCE(SUM(k.KycVerifiedBy IS NOT NULL), 0) AS verified
+                    FROM (SELECT CustomerId, MAX(TxnId) AS max_txn
+                          FROM cbs_cust_kyc_details GROUP BY CustomerId) g
+                    JOIN cbs_cust_kyc_details k ON k.TxnId = g.max_txn
+                    JOIN cbs_customer_master_detail c ON c.customerid = g.CustomerId
+                    {branch_join}
+                    WHERE c.SuspensionFlg NOT IN ('Y', 'S')
+                """, branch_params)
+                kyc_row = await cur.fetchone()
+
+    total                 = total_row["total"] or 0
+    has_kyc               = int(kyc_row["has_kyc"] or 0)
+    verified              = int(kyc_row["verified"] or 0)
+    awaiting_verification = has_kyc - verified
+    no_kyc_record         = total - has_kyc
     pending               = awaiting_verification + no_kyc_record
 
     if total > 0:
